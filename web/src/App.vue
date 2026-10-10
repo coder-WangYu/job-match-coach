@@ -1,0 +1,66 @@
+<script setup>
+import { ref } from 'vue';
+
+const resume = ref("")
+const jd = ref("")
+const score = ref(0)
+const suggestions = ref([])
+const loading = ref(false)
+const error = ref("")
+
+// 获取匹配结果
+async function match() {
+  error.value = ""
+
+  if (!resume.value.trim() || !jd.value.trim()) throw new Error("请填写简历和JD")
+
+  loading.value = true
+
+  try {
+    const res = await fetch("http://127.0.0.1:8000/match", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json'},
+      body: JSON.stringify({ resume: resume.value, jd: jd.value})
+    })
+
+    if (!res.ok) throw new Error("请求失败：" + res.status)
+
+    const data = await res.json()
+    score.value = data.score
+    suggestions.value = data.suggestions
+  } catch(err) {
+    error.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
+</script>
+
+<template>
+  <div class="p-2">
+    <h1 class="text-2xl font-bold mb-4">
+      求职匹配助手
+    </h1>
+
+    <h3 class="mb-2">简历：</h3>
+    <textarea class="w-200 h-50 border-2" id="resume" v-model="resume"></textarea>
+
+    <h3 class="my-2">JD：</h3>
+    <textarea class="w-200 h-50 border-2" id="jd" v-model="jd"></textarea>
+
+    <button class="block my-4 px-4 py-2 rounded-lg cursor-pointer bg-amber-200 hover:bg-amber-500" :disabled="loading" @click="match">
+      {{ loading == true ? "分析中..." : "开始匹配" }}
+    </button>
+
+    <div class="px-4" v-if="score !== null && suggestions.length > 0">
+      <div class="mb-2">匹配分数：<span>{{ score }}</span></div>
+      <div>改进建议：</div>
+      <ul>
+        <li class="pl-4" v-for="(tip, i) in suggestions" :key="i">- {{ tip }}</li>
+      </ul>
+    </div>
+    <div v-if="error">
+      <span class="text-red-500">{{ error }}</span>
+    </div>
+  </div>
+</template>
