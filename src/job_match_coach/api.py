@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from job_match_coach.llm_matcher import match_with_llm
 from job_match_coach.models import Resume, JobDescription
 from fastapi.middleware.cors import CORSMiddleware
+from job_match_coach.graph import graph
 
 app = FastAPI(title="求职匹配助手 API")
 
@@ -32,11 +33,17 @@ def match(body: MatchRequest) -> MatchResponse:
 
     if not resume: raise HTTPException(status_code=404, detail="简历不存在")
 
-    response = match_with_llm(Resume(text=resume), JobDescription(text=body.jd))
+    response = graph.invoke({
+        "resume": resume,
+        "jd": body.jd,
+        "skills": [],
+        "score": 0,
+        "suggestions": [],
+    })
 
     return {
-        "score": response.score,
-        "suggestions": response.suggestions
+        "score": response["score"],
+        "suggestions": response["suggestions"]
     }
 
 # 上传简历
