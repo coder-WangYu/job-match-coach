@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 
 // 获取匹配结果
+const jd = ref("")
 const score = ref(0)
 const suggestions = ref([])
 const loading = ref(false)
@@ -10,7 +11,7 @@ const error = ref("")
 async function match() {
   error.value = ""
 
-  if (!resumeId.value.trim() || !jdId.value.trim()) throw new Error("请填写简历和JD")
+  if (!resumeId.value.trim() || !jd.value.trim()) throw new Error("请填写简历和JD")
 
   loading.value = true
 
@@ -18,7 +19,7 @@ async function match() {
     const res = await fetch("http://127.0.0.1:8000/match", {
       method: 'POST',
       headers: { 'Content-Type': 'application/json'},
-      body: JSON.stringify({ resume_id: resumeId.value, jd_id: jdId.value})
+      body: JSON.stringify({ resume_id: resumeId.value, jd: jd.value})
     })
 
     if (!res.ok) throw new Error("请求失败：" + res.status)
@@ -59,26 +60,6 @@ async function getResume(e) {
     throw new Error("上传失败：" + e.value)
   }
 }
-
-// 获取JD
-const jdUrl = ref("")
-const jdId = ref("")
-
-async function getJD() {
-  try {
-    const res = await fetch("http://127.0.0.1:8000/fetch-jd", {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: jdUrl.value }),
-    })
-
-    const data = await res.json()
-    jdId.value = data.jd_id
-    console.log(data)
-  } catch(e) {
-    throw new Error("解析失败：" + e.value)
-  }
-}
 </script>
 
 <template>
@@ -93,8 +74,7 @@ async function getJD() {
      <p v-if="resumeFile">已选择：{{ resumeFile.name }}</p>
 
     <h3 class="my-2">JD：</h3>
-    <!-- <textarea class="w-200 h-50 border-2" id="jd" v-model="jd"></textarea> -->
-     <input class="border-2" type="input" v-model="jdUrl" @change="getJD">
+    <textarea class="w-200 h-50 border-2" v-model="jd"></textarea>
 
     <button class="block my-4 px-4 py-2 rounded-lg cursor-pointer bg-amber-200 hover:bg-amber-500" :disabled="loading" @click="match">
       {{ loading == true ? "分析中..." : "开始匹配" }}
