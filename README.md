@@ -21,3 +21,8 @@ http://127.0.0.1:8000/docs - 查看接口文档
 ## 如何启动前端
 进入web文件夹使用一下命令：
 npm run dev
+
+## 如何使用
+1. 上传简历（/upload-resume）获取resume_id，简历内容保存在后端
+2. 填写JD链接（/fetch-jd）获取jd_id，JD内容保存在后端
+3. 匹配（/match）时通过给后端传这两个id获取结果

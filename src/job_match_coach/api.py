@@ -1,6 +1,8 @@
+import httpx
+from uuid import uuid4
 from io import BytesIO
 from pypdf import PdfReader
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from job_match_coach.llm_matcher import match_with_llm
 from job_match_coach.models import Resume, JobDescription
@@ -8,14 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="求职匹配助手 API")
 
+# 维护映射：resume_id -> resume.text
+RESUME_STORE: dict[str, str] = {}
+
+# 维护映射：jd_id -> jd.text
+JD_STORE: dict[str, str] = {}
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 # 利用Pydantic模型定义入参 / 出参
 class MatchRequest(BaseModel):
-    resume: str
-    jd: str
+    resume_id: str
+    jd_id: str
 
 class MatchResponse(BaseModel):
     score: float
@@ -24,7 +32,13 @@ class MatchResponse(BaseModel):
 # 匹配简历 & JD
 @app.post("/match", response_model=MatchResponse)
 def match(body: MatchRequest) -> MatchResponse:
-    response = match_with_llm(Resume(text=body.resume), JobDescription(text=body.jd))
+    resume = RESUME_STORE.get(body.resume_id)
+    jd = JD_STORE.get(body.jd_id)
+
+    if not resume: raise HTTPException(status_code=404, detail="简历不存在")
+    if not jd: raise HTTPException(status_code=404, detail="JD不存在")
+
+    response = match_with_llm(Resume(text=resume), JobDescription(text=jd))
 
     return {
         "score": response.score,
@@ -43,11 +57,35 @@ async def upload_resume(file: UploadFile = File(...)):
 
     text = "\n".join(parts).strip()
 
+    # 创建resume_id
+    resume_id = str(uuid4())
+    RESUME_STORE[resume_id] = text
+
     return {
+        "resume_id": resume_id,
         "filename": file.filename, 
-        "size": len(content),
-        "text": text
+        "size": len(content)
     }
+
+class FetchJdRequest(BaseModel):
+    url: str
+
+# 拉取JD
+@app.post("/fetch-jd")
+async def fetch_jd(body: FetchJdRequest):
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        response = await client.get(body.url)
+
+        # 创建jd_id
+        jd_id = str(uuid4())
+        JD_STORE[jd_id] = response.text
+
+    return {
+        "jd_id": jd_id,
+        "status": "ok", 
+        "length": len(response.text)
+    }
+
 
 # CORS解决浏览器安全限制：允许跨域请求（比如前端 localhost:5173 去请求后端 localhost:8000 ）
 app.add_middleware(
