@@ -3,15 +3,10 @@ from io import BytesIO
 from pypdf import PdfReader
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from job_match_coach.llm_matcher import match_with_llm
-from job_match_coach.models import Resume, JobDescription
 from fastapi.middleware.cors import CORSMiddleware
 from job_match_coach.graph import graph
 
 app = FastAPI(title="求职匹配助手 API")
-
-# 维护映射：resume_id -> resume.text
-RESUME_STORE: dict[str, str] = {}
 
 @app.get("/health")
 def health():
@@ -25,6 +20,9 @@ class MatchRequest(BaseModel):
 class MatchResponse(BaseModel):
     score: float
     suggestions: list[str]
+
+# 维护映射：resume_id -> resume.text
+RESUME_STORE: dict[str, str] = {}
 
 # 匹配简历 & JD
 @app.post("/match", response_model=MatchResponse)
