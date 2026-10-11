@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+from io import BytesIO
+from pypdf import PdfReader
+from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
 from job_match_coach.llm_matcher import match_with_llm
 from job_match_coach.models import Resume, JobDescription
@@ -19,6 +21,7 @@ class MatchResponse(BaseModel):
     score: float
     suggestions: list[str]
 
+# 匹配简历 & JD
 @app.post("/match", response_model=MatchResponse)
 def match(body: MatchRequest) -> MatchResponse:
     response = match_with_llm(Resume(text=body.resume), JobDescription(text=body.jd))
@@ -26,6 +29,24 @@ def match(body: MatchRequest) -> MatchResponse:
     return {
         "score": response.score,
         "suggestions": response.suggestions
+    }
+
+# 上传简历
+@app.post("/upload-resume")
+async def upload_resume(file: UploadFile = File(...)):
+    content = await file.read()
+    reader = PdfReader(BytesIO(content))
+    parts = []
+
+    for page in reader.pages:
+        parts.append(page.extract_text() or "")
+
+    text = "\n".join(parts).strip()
+
+    return {
+        "filename": file.filename, 
+        "size": len(content),
+        "text": text
     }
 
 # CORS解决浏览器安全限制：允许跨域请求（比如前端 localhost:5173 去请求后端 localhost:8000 ）

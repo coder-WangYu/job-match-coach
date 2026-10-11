@@ -34,6 +34,33 @@ async function match() {
     loading.value = false
   }
 }
+
+// 获取用户简历
+const resumeFile = ref(null)
+
+async function getResume(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  console.log(file.name);
+
+  resumeFile.value = file
+
+  try {
+    const form = new FormData()
+    form.append("file", resumeFile.value)
+
+    const res = await fetch("http://127.0.0.1:8000/upload-resume", {
+      method: 'POST',
+      body: form
+    })
+
+    const data = await res.json()
+    
+    resume.value = data.text
+  } catch(e) {
+    throw new Error("上传失败：" + e.value)
+  }
+}
 </script>
 
 <template>
@@ -43,7 +70,9 @@ async function match() {
     </h1>
 
     <h3 class="mb-2">简历：</h3>
-    <textarea class="w-200 h-50 border-2" id="resume" v-model="resume"></textarea>
+    <!-- <textarea class="w-200 h-50 border-2" id="resume" v-model="resume"></textarea> -->
+     <input type="file" accept=".pdf,.doc,.docx,.wps" @change="getResume">
+     <p v-if="resumeFile">已选择：{{ resumeFile.name }}</p>
 
     <h3 class="my-2">JD：</h3>
     <textarea class="w-200 h-50 border-2" id="jd" v-model="jd"></textarea>

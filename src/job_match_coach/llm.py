@@ -1,3 +1,4 @@
+from cgi import test
 from dotenv import load_dotenv
 from openai import OpenAI
 import os
@@ -24,3 +25,20 @@ def ask(prompt: str) -> str:
     )
 
     return response.choices[0].message.content or ""
+
+def testPDF() -> str:
+    client = get_client()
+
+    response = client.chat.completions.create(
+        model="deepseek-v4-pro",
+        messages=[
+            {"role": "user", "content": "用三句话概括这份简历"}
+        ]
+    )
+
+    print(response)
+
+    return ""
+
+if __name__ == "__main__":
+    testPDF()
