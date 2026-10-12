@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import uuid4
 from io import BytesIO
 from pypdf import PdfReader
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from job_match_coach.graph import graph
 from job_match_coach.db import create_user, get_resume, get_user_by_username, init_db, save_resume
+from job_match_coach.supabase_client import get_supabase
 
 app = FastAPI(title="同频——人岗智配Agent")
 init_db()
@@ -68,24 +70,54 @@ async def upload_resume(file: UploadFile = File(...)):
         "size": len(content)
     }
 
-class UserRequest(BaseModel):
-    username: str
-
 # 用户注册
+class UserRegister(BaseModel):
+    email: str
+    password: str
+    role: Literal["job_seeker", "head_hunter", "hr"]
+
 @app.post("/register")
-def register(body: UserRequest) -> str:
-    return create_user(body.username)
+def register(body: UserRegister) -> dict:
+    try:
+        result = get_supabase().auth.sign_up({
+            "email": body.email,
+            "password": body.password,
+            "options": {
+                "data": {
+                    "role": body.role
+                }
+            }
+        })
+
+        return {
+            "user_id": result.user.id,
+            "email": body.email,
+            "role": body.role
+        }
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 # 用户登录
-@app.post("/login")
-def login(body: UserRequest):
-    user = get_user_by_username(body.username)
-    if not user: raise HTTPException(404, "用户未注册")
+class UserLogin(BaseModel):
+    email: str
+    password: str
 
-    return {
-        "user_id": user,
-        "username": body.username
-    }
+@app.post("/login")
+def login(body: UserLogin) -> dict:
+    try:
+        result = get_supabase().auth.sign_in_with_password({
+            "email": body.email,
+            "password": body.password
+        })
+
+        return {
+            "user_id": result.user.id,
+            "email": body.email,
+            "role": result.user.user_metadata.get("role")
+        }
+    
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 # CORS解决浏览器安全限制：允许跨域请求（比如前端 localhost:5173 去请求后端 localhost:8000 ）
 app.add_middleware(

@@ -1,7 +1,8 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { ROLE_OPTIONS, ROLES } from '../config/roles'
 
 const API_BASE = "http://127.0.0.1:8000"
 
@@ -14,14 +15,20 @@ const mode = ref('login')
 const email = ref("")
 const password = ref("")
 const confirmPassword = ref("")
+const role = ref("")
 const showPassword = ref(false)
+
+// 角色下拉：展开状态与键盘高亮到哪一项
+const roleBox = ref(null)
+const roleOpen = ref(false)
+const roleActiveIndex = ref(-1)
 
 const loading = ref(false)
 const error = ref("")
 const notice = ref("")
 
 // 字段被碰过之后才显示错误，避免刚进页面就满屏飘红
-const touched = reactive({ email: false, password: false, confirmPassword: false })
+const touched = reactive({ email: false, password: false, confirmPassword: false, role: false })
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -55,7 +62,87 @@ const confirmError = computed(() => {
   return ""
 })
 
-const canSubmit = computed(() => !emailError.value && !passwordError.value && !confirmError.value)
+const roleError = computed(() => {
+  if (mode.value !== "register") return ""
+  if (!role.value) return "请选择你的角色"
+  return ""
+})
+
+const canSubmit = computed(
+  () => !emailError.value && !passwordError.value && !confirmError.value && !roleError.value
+)
+
+const roleLabel = computed(
+  () => ROLE_OPTIONS.find((option) => option.value === role.value)?.label ?? "请选择你的角色"
+)
+
+// 错误、展开、常态三种边框样式，互斥地挑一个
+const roleFieldClass = computed(() => {
+  if (touched.role && roleError.value) return "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
+  if (roleOpen.value) return "border-amber-400 ring-2 ring-amber-100"
+  return "border-stone-200 hover:border-stone-300 focus:border-amber-400 focus:ring-amber-100"
+})
+
+function toggleRole() {
+  roleOpen.value = !roleOpen.value
+
+  if (roleOpen.value) {
+    const index = ROLE_OPTIONS.findIndex((option) => option.value === role.value)
+    roleActiveIndex.value = index >= 0 ? index : 0
+  }
+}
+
+// 收起时如果还没选，就当用户碰过这个字段了，这时才提示
+function closeRole() {
+  if (roleOpen.value) touched.role = true
+  roleOpen.value = false
+  roleActiveIndex.value = -1
+}
+
+function pickRole(option) {
+  role.value = option.value
+  touched.role = true
+  closeRole()
+}
+
+function moveRoleActive(step) {
+  if (!roleOpen.value) {
+    toggleRole()
+    return
+  }
+
+  const total = ROLE_OPTIONS.length
+  roleActiveIndex.value = (roleActiveIndex.value + step + total) % total
+}
+
+// 上下键移动、回车选中、Esc 收起
+function onRoleKeydown(event) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault()
+    moveRoleActive(1)
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault()
+    moveRoleActive(-1)
+  } else if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault()
+    if (roleOpen.value && roleActiveIndex.value >= 0) {
+      pickRole(ROLE_OPTIONS[roleActiveIndex.value])
+    } else {
+      toggleRole()
+    }
+  } else if (event.key === "Escape" || event.key === "Tab") {
+    closeRole()
+  }
+}
+
+// 点到面板外面就收起来
+function onDocumentClick(event) {
+  if (!roleOpen.value) return
+  if (roleBox.value && !roleBox.value.contains(event.target)) closeRole()
+}
+
+onMounted(() => document.addEventListener("click", onDocumentClick))
+onBeforeUnmount(() => document.removeEventListener("click", onDocumentClick))
 
 // 登录 / 注册之间切换，顺手清掉上一次的输入和提示
 function switchMode(next) {
@@ -68,12 +155,16 @@ function switchMode(next) {
   notice.value = ""
   touched.password = false
   touched.confirmPassword = false
+  closeRole()
+  // closeRole 会把 role 标记成已碰过，这里再清掉
+  touched.role = false
 }
 
 async function submit() {
   touched.email = true
   touched.password = true
   touched.confirmPassword = true
+  touched.role = true
   error.value = ""
   notice.value = ""
 
@@ -94,16 +185,31 @@ async function submit() {
   }
 }
 
+// 把后端返回的错误翻成一句人话，Supabase 原本给的是英文
+async function readError(res) {
+  const data = await res.json().catch(() => null)
+  const detail = typeof data?.detail === "string" ? data.detail : ""
+
+  if (/already registered|already been registered/i.test(detail)) return "这个邮箱已经注册过了，直接登录吧"
+  if (/invalid login credentials/i.test(detail)) return "邮箱或密码不正确"
+  if (/email not confirmed/i.test(detail)) return "邮箱还没验证，先去邮箱里点一下确认链接"
+  if (/rate limit|too many/i.test(detail)) return "操作太频繁了，稍等一下再试"
+
+  if (detail) return detail
+  if (res.status === 422) return "请求格式不对，检查一下邮箱和密码"
+  return `请求失败（${res.status}）`
+}
+
 // 注册：成功后切回登录态，邮箱留在输入框里
 async function register() {
   const res = await fetch(`${API_BASE}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: email.value.trim(), password: password.value })
+    body: JSON.stringify({ email: email.value.trim(), password: password.value, role: role.value })
   })
 
   if (!res.ok) {
-    throw new Error(res.status === 500 ? "这个邮箱可能已经被注册过了" : `注册失败（${res.status}）`)
+    throw new Error(await readError(res))
   }
 
   mode.value = 'login'
@@ -119,50 +225,23 @@ async function login() {
   const res = await fetch(`${API_BASE}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: email.value.trim(), password: password.value })
+    body: JSON.stringify({ email: email.value.trim(), password: password.value })
   })
 
   if (!res.ok) {
-    if (res.status === 404) throw new Error("这个邮箱还没有注册，先去注册一个")
-
-    const data = await res.json().catch(() => null)
-    throw new Error(data?.detail || `登录失败（${res.status}）`)
+    throw new Error(await readError(res))
   }
 
   const data = await res.json()
-  userStore.setUser(data.user_id, data.username)
-
-  router.push('/job-seeker')
+  userStore.setUser(data.user_id, data.email, data.role)
+  
+  // 跳转到角色对应页面
+  router.push(ROLES[data.role].path)
 }
 </script>
 
 <template>
   <div class="flex min-h-screen flex-col bg-[#f7f6f3] text-stone-800 antialiased">
-
-    <!-- 顶部：品牌与返回 -->
-    <header class="mx-auto flex w-full max-w-5xl items-center gap-3 px-5 py-5 sm:px-8">
-      <router-link to="/" class="flex items-center gap-2.5">
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-400 text-white shadow-sm">
-          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-            <rect width="20" height="14" x="2" y="6" rx="2" />
-          </svg>
-        </span>
-        <span class="flex min-w-0 flex-col leading-tight">
-          <span class="truncate text-sm font-semibold text-stone-900">同频</span>
-          <span class="truncate text-[11px] text-stone-400">人岗智配Agent</span>
-        </span>
-      </router-link>
-
-      <router-link to="/" class="ml-auto inline-flex items-center gap-1.5 text-sm text-stone-500 transition hover:text-stone-800">
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m12 19-7-7 7-7" />
-          <path d="M19 12H5" />
-        </svg>
-        返回首页
-      </router-link>
-    </header>
-
     <main class="flex flex-1 items-start justify-center px-5 pb-16 pt-2 sm:items-center sm:px-8">
       <div class="w-full max-w-md">
         <div class="rounded-lg border border-stone-200/80 bg-white p-6 shadow-sm sm:p-7">
@@ -314,6 +393,81 @@ async function login() {
               <p v-if="touched.confirmPassword && confirmError" class="mt-1.5 text-xs text-rose-500">{{ confirmError }}</p>
             </div>
 
+            <!-- 角色：只有注册时需要 -->
+            <div v-if="mode === 'register'">
+              <label id="role-label" for="role" class="mb-1.5 block text-sm font-medium text-stone-700">角色</label>
+              <div ref="roleBox" class="relative">
+                <span
+                  class="pointer-events-none absolute inset-y-0 left-3 grid place-items-center transition"
+                  :class="role ? 'text-amber-500' : 'text-stone-400'"
+                >
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                </span>
+
+                <button
+                  id="role"
+                  type="button"
+                  role="combobox"
+                  aria-haspopup="listbox"
+                  aria-controls="role-listbox"
+                  :aria-expanded="roleOpen"
+                  :aria-activedescendant="roleOpen && roleActiveIndex >= 0 ? `role-option-${ROLE_OPTIONS[roleActiveIndex].value}` : undefined"
+                  :aria-invalid="Boolean(touched.role && roleError)"
+                  class="flex w-full items-center justify-between gap-2 rounded-lg border bg-white py-2.5 pl-9 pr-3 text-left text-sm transition focus:outline-none focus:ring-2"
+                  :class="roleFieldClass"
+                  @click="toggleRole"
+                  @keydown="onRoleKeydown"
+                >
+                  <span :class="role ? 'text-stone-800' : 'text-stone-400'">{{ roleLabel }}</span>
+                  <svg
+                    class="h-4 w-4 shrink-0 text-stone-400 transition-transform duration-150"
+                    :class="roleOpen ? 'rotate-180' : ''"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
+
+                <Transition name="role-pop">
+                  <ul
+                    v-if="roleOpen"
+                    id="role-listbox"
+                    role="listbox"
+                    aria-labelledby="role-label"
+                    class="absolute z-20 mt-2 w-full origin-top rounded-lg border border-stone-200 bg-white p-1 shadow-lg"
+                  >
+                    <li
+                      v-for="(option, i) in ROLE_OPTIONS"
+                      :id="`role-option-${option.value}`"
+                      :key="option.value"
+                      role="option"
+                      :aria-selected="option.value === role"
+                      class="flex cursor-pointer items-center justify-between gap-2 rounded-md px-3 py-2.5 text-sm transition"
+                      :class="[
+                        i === roleActiveIndex ? 'bg-amber-50 text-amber-900' : 'text-stone-600',
+                        option.value === role ? 'font-medium' : '',
+                      ]"
+                      @click="pickRole(option)"
+                      @mouseenter="roleActiveIndex = i"
+                    >
+                      {{ option.label }}
+                      <svg
+                        v-if="option.value === role"
+                        class="h-4 w-4 shrink-0 text-amber-500"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+                      >
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                    </li>
+                  </ul>
+                </Transition>
+              </div>
+              <p v-if="touched.role && roleError" class="mt-1.5 text-xs text-rose-500">{{ roleError }}</p>
+            </div>
+
             <!-- 服务端返回的提示 -->
             <div v-if="notice" class="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm text-emerald-700">
               <svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -352,3 +506,17 @@ async function login() {
     </main>
   </div>
 </template>
+
+<style scoped>
+/* 下拉面板的进出场：轻微下落 + 淡入 */
+.role-pop-enter-active,
+.role-pop-leave-active {
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.role-pop-enter-from,
+.role-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+</style>
