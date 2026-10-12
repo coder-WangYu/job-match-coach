@@ -6,15 +6,16 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from job_match_coach.graph import graph
-from job_match_coach.db import create_user, get_resume, get_user_by_username, init_db, save_resume
 from job_match_coach.supabase_client import get_supabase
 
 app = FastAPI(title="同频——人岗智配Agent")
-init_db()
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+# 简历：resume_id -> text
+RESUME_STORE: dict[str, str] = {}
 
 # 利用Pydantic模型定义入参 / 出参
 class MatchRequest(BaseModel):
@@ -28,8 +29,7 @@ class MatchResponse(BaseModel):
 # 匹配简历 & JD
 @app.post("/match", response_model=MatchResponse)
 def match(body: MatchRequest) -> MatchResponse:
-    # 从SQLite获取简历
-    resume = get_resume(body.resume_id)
+    resume = RESUME_STORE.get(body.resume_id)
 
     if not resume: raise HTTPException(status_code=404, detail="简历不存在")
 
@@ -60,9 +60,7 @@ async def upload_resume(file: UploadFile = File(...)):
 
     # 创建resume_id
     resume_id = str(uuid4())
-
-    # 存入SQLite
-    save_resume(resume_id, text, file.filename)
+    RESUME_STORE[resume_id] = text
 
     return {
         "resume_id": resume_id,
