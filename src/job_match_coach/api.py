@@ -5,8 +5,10 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from job_match_coach.graph import graph
+from job_match_coach.db import create_user, get_resume, get_user_by_username, init_db, save_resume
 
-app = FastAPI(title="求职匹配助手 API")
+app = FastAPI(title="同频——人岗智配Agent")
+init_db()
 
 @app.get("/health")
 def health():
@@ -21,13 +23,11 @@ class MatchResponse(BaseModel):
     score: float
     suggestions: list[str]
 
-# 维护映射：resume_id -> resume.text
-RESUME_STORE: dict[str, str] = {}
-
 # 匹配简历 & JD
 @app.post("/match", response_model=MatchResponse)
 def match(body: MatchRequest) -> MatchResponse:
-    resume = RESUME_STORE.get(body.resume_id)
+    # 从SQLite获取简历
+    resume = get_resume(body.resume_id)
 
     if not resume: raise HTTPException(status_code=404, detail="简历不存在")
 
@@ -58,12 +58,33 @@ async def upload_resume(file: UploadFile = File(...)):
 
     # 创建resume_id
     resume_id = str(uuid4())
-    RESUME_STORE[resume_id] = text
+
+    # 存入SQLite
+    save_resume(resume_id, text, file.filename)
 
     return {
         "resume_id": resume_id,
         "filename": file.filename, 
         "size": len(content)
+    }
+
+class UserRequest(BaseModel):
+    username: str
+
+# 用户注册
+@app.post("/register")
+def register(body: UserRequest) -> str:
+    return create_user(body.username)
+
+# 用户登录
+@app.post("/login")
+def login(body: UserRequest):
+    user = get_user_by_username(body.username)
+    if not user: raise HTTPException(404, "用户未注册")
+
+    return {
+        "user_id": user,
+        "username": body.username
     }
 
 # CORS解决浏览器安全限制：允许跨域请求（比如前端 localhost:5173 去请求后端 localhost:8000 ）
