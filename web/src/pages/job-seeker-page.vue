@@ -163,14 +163,7 @@ async function send() {
         body: JSON.stringify({ 
           resume_id: resumeId.value, 
           jd: jdText.value, 
-          history: messages.value
-            .filter(m => m.kind === "text" || m.kind === "result")
-            .map(m => ({
-              role: m.role,
-              content: m.kind === "result"
-                ? `匹配度 ${m.score}；建议：${(m.suggestions || []).join(";")}`
-                : m.text
-            }))
+          user_text: text
         })
       })
 

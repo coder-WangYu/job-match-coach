@@ -1,3 +1,4 @@
+from email import message
 from typing import Literal
 from uuid import uuid4
 from io import BytesIO
@@ -17,6 +18,9 @@ def health():
 
 # 简历：resume_id -> text
 RESUME_STORE: dict[str, str] = {}
+
+# 对话：resume_id -> 消息列表
+CHAT_STORE: dict[str, list[dict]] = {}
 
 # 利用Pydantic模型定义入参 / 出参
 class MatchRequest(BaseModel):
@@ -42,6 +46,10 @@ def match(body: MatchRequest) -> MatchResponse:
         "suggestions": [],
     })
 
+    CHAT_STORE.setdefault(body.resume_id, [])
+    CHAT_STORE[body.resume_id].append({ "role": "user", "content": body.jd })
+    CHAT_STORE[body.resume_id].append({ "role": "assistant", "content": f"匹配分数{response['score']}；改进建议{response['suggestions']}" })
+
     return {
         "score": response["score"],
         "suggestions": response["suggestions"]
@@ -51,21 +59,30 @@ def match(body: MatchRequest) -> MatchResponse:
 class ChatHistory(BaseModel):
     resume_id: str
     jd: str
-    history: list[dict]
+    user_text: str
 
 @app.post("/chat")
 def chat(body: ChatHistory):
     resume = RESUME_STORE.get(body.resume_id)
+    history = CHAT_STORE.setdefault(body.resume_id, [])
+    user_message = { "role": "user", "content": body.user_text }
 
     if not resume:
         raise HTTPException(status_code=404, detail="简历不存在")
 
     messages = [
         { "role": "system", "content": f"你是一名专业的人岗匹配助手，附上简历摘要{resume} 和 JD {body.jd}，就用户需求给出建议"},
-        *body.history # 展开写法
+        *history, # 展开写法
+        user_message
     ]
 
-    return { "reply": ask_messages(messages) }
+    # 更新对话历史
+    reply = ask_messages(messages)
+    assistant_message = { "role": "assistant", "content": reply }
+    CHAT_STORE[body.resume_id].append(user_message)
+    CHAT_STORE[body.resume_id].append(assistant_message)
+
+    return { "reply": reply }
 
 
 # 上传简历
