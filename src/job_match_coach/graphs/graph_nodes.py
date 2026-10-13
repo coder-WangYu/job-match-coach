@@ -1,6 +1,6 @@
 import json
-from job_match_coach.graph_state import MatchState
-from job_match_coach.llm import ask
+from job_match_coach.graphs.graph_state import MatchState
+from job_match_coach.llm.llm import ask
 
 def extract_skills(state: MatchState) -> dict:
     prompt = f"""
