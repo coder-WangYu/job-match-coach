@@ -26,6 +26,17 @@ def ask(prompt: str) -> str:
 
     return response.choices[0].message.content or ""
 
+# 多轮对话
+def ask_messages(messages: list[dict]) -> str:
+    client = get_client()
+
+    response = client.chat.completions.create(
+        model="deepseek-v4-pro",
+        messages=messages
+    )
+
+    return response.choices[0].message.content or ""
+
 def testPDF() -> str:
     client = get_client()
 

@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { nextTick, ref } from 'vue';
+import MarkdownText from '../components/markdown-text.vue';
 
 const API_BASE = "http://127.0.0.1:8000"
 
@@ -8,53 +9,76 @@ const resumeFile = ref(null)
 const resumeId = ref("")
 const uploading = ref(false)
 
-// 岗位描述
-const jd = ref("")
+// 输入框里的岗位描述
+const jdText = ref("")
 
-// 匹配结果
-const score = ref(0)
-const suggestions = ref([])
-const hasResult = ref(false)
+// 用户输入
+const userInput = ref("")
+
+// 简历JD匹配结果
+const matchData = ref({})
+
+// 对话内容，每条消息形如 { id, role, kind, ... }
+const messages = ref([])
 const loading = ref(false)
 const error = ref("")
 
-// 圆环进度：用半径算出周长，再按分数换算 dashoffset
-const CIRCUMFERENCE = 2 * Math.PI * 34
-const dashOffset = computed(() => {
-  const percent = Math.min(Math.max(score.value, 0), 100) / 100
-  return CIRCUMFERENCE * (1 - percent)
-})
+const listEl = ref(null)
+const composerEl = ref(null)
 
-const scoreText = computed(() => Math.round(score.value))
+let messageSeq = 0
+
+const CIRCUMFERENCE = 2 * Math.PI * 34
 
 // 分数越高颜色越柔和，避免红绿对撞的刺眼感
-const tone = computed(() => {
-  if (score.value >= 80) return { ring: "#34d399", text: "text-emerald-600" }
-  if (score.value >= 60) return { ring: "#f59e0b", text: "text-amber-600" }
+function toneOf(score) {
+  if (score >= 80) return { ring: "#34d399", text: "text-emerald-600" }
+  if (score >= 60) return { ring: "#f59e0b", text: "text-amber-600" }
   return { ring: "#fb7185", text: "text-rose-500" }
-})
+}
 
-const scoreSummary = computed(() => {
-  if (score.value >= 80) return "匹配度很高，你的经历和这个岗位很接近，可以放心投递。"
-  if (score.value >= 60) return "匹配度不错，补上下面这几处缺口，通过率会更高。"
+function dashOffsetOf(score) {
+  const percent = Math.min(Math.max(score, 0), 100) / 100
+  return CIRCUMFERENCE * (1 - percent)
+}
+
+function summaryOf(score) {
+  if (score >= 80) return "匹配度很高，你的经历和这个岗位很接近，可以放心投递。"
+  if (score >= 60) return "匹配度不错，补上下面这几处缺口，通过率会更高。"
   return "和岗位要求还有一些差距，先看看下面这些建议。"
-})
+}
+
+// 追加一条消息，并把视野带到底部
+function pushMessage(message) {
+  messages.value.push({ id: ++messageSeq, ...message })
+  scrollToBottom()
+}
+
+async function scrollToBottom() {
+  await nextTick()
+  listEl.value?.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "end" })
+}
 
 // 上传简历，成功后拿到 resume_id
 async function getResume(e) {
+  // 重置简历 & JD & 历史会话
+  matchData.value = {}
+  jdText.value = ""
+  messages.value = []
+  
   const file = e.target.files?.[0]
   if (!file) return
 
   error.value = ""
-  resumeFile.value = file
   resumeId.value = ""
+  resumeFile.value = null
   uploading.value = true
 
   try {
     const form = new FormData()
     form.append("file", file)
 
-    const res = await fetch(`${API_BASE}/upload-resume`, {
+    const res = await fetch(`${API_BASE}/upload_resume`, {
       method: 'POST',
       body: form
     })
@@ -63,229 +87,314 @@ async function getResume(e) {
 
     const data = await res.json()
     resumeId.value = data.resume_id
+    resumeFile.value = file
+
+    pushMessage({ role: "user", kind: "resume", fileName: file.name })
+    pushMessage({
+      role: "assistant",
+      kind: "text",
+      text: "简历收到了，把想投的岗位 JD 粘贴到下面发给我，我来算算匹配度。",
+    })
   } catch (err) {
     error.value = "简历上传失败：" + err.message
   } finally {
     uploading.value = false
+    // 清空 input 的值，否则再选同一份文件不会触发 change
+    e.target.value = ""
   }
 }
 
-// 提交简历与 JD，获取匹配结果
-async function match() {
+// 发送 JD，获取匹配结果
+async function send() {
+  if (loading.value || uploading.value) return
+
   error.value = ""
 
-  if (!resumeId.value.trim() || !jd.value.trim()) {
-    error.value = "请先上传简历，并填写岗位 JD"
+  const text = userInput.value.trim()
+  if (!text) return
+
+  if (!resumeId.value) {
+    error.value = "先上传一份简历，我才能算匹配度"
     return
   }
 
-  loading.value = true
+  if (Object.keys(matchData.value).length === 0) { // 第一次发送JD，走/match
+    pushMessage({ role: "user", kind: "text", text })
+    userInput.value = ""
+    composerEl.value?.focus()
+    loading.value = true
 
-  try {
-    const res = await fetch(`${API_BASE}/match`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resume_id: resumeId.value, jd: jd.value })
-    })
+    try {
+      const res = await fetch(`${API_BASE}/match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resume_id: resumeId.value, jd: text })
+      })
 
-    if (!res.ok) throw new Error("请求失败：" + res.status)
+      if (!res.ok) throw new Error("请求失败：" + res.status)
 
-    const data = await res.json()
-    score.value = Number(data.score) || 0
-    suggestions.value = data.suggestions ?? []
-    hasResult.value = true
-  } catch (err) {
-    error.value = err.message
-  } finally {
-    loading.value = false
+      const data = await res.json()
+
+      // 记录matchData，后续send走/chat
+      matchData.value = data
+      jdText.value = text
+
+      pushMessage({
+        role: "assistant",
+        kind: "result",
+        score: Number(data.score) || 0,
+        suggestions: data.suggestions ?? [],
+      })
+    } catch (err) {
+      error.value = err.message
+    } finally {
+      loading.value = false
+    }
+  } else { // 后续发送内容，走/chat
+    pushMessage({ role: "user", kind: "text", text })
+    userInput.value = ""
+    composerEl.value?.focus()
+    loading.value = true
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          resume_id: resumeId.value, 
+          jd: jdText.value, 
+          history: messages.value
+            .filter(m => m.kind === "text" || m.kind === "result")
+            .map(m => ({
+              role: m.role,
+              content: m.kind === "result"
+                ? `匹配度 ${m.score}；建议：${(m.suggestions || []).join(";")}`
+                : m.text
+            }))
+        })
+      })
+
+      if (!res.ok) throw new Error("请求失败：" + res.status)
+
+      const data = await res.json()
+
+      pushMessage({ role: "assistant", kind: "text", text: data.reply })
+    } catch (err) {
+      error.value = err.message
+    } finally {
+      loading.value = false
+    }
   }
 }
 
-function onLoginSuccess(data) {
-  console.log(data)
+// 回车发送、Shift + Enter 换行；输入法选词那一下回车不算发送
+function onComposerKeydown(event) {
+  if (event.key !== "Enter" || event.shiftKey) return
+  if (event.isComposing || event.keyCode === 229) return
+
+  event.preventDefault()
+  send()
 }
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#f7f6f3] text-stone-800 antialiased">
-    <div class="mx-auto flex max-w-5xl flex-col gap-6 px-5 py-10 sm:px-8 sm:py-14">
+  <div class="chat-shell flex flex-col bg-[#f7f6f3] text-stone-800 antialiased">
 
-      <!-- 顶部标题 -->
-      <header class="flex items-start gap-3">
-        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-amber-400 text-white shadow-sm">
-          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-            <rect width="20" height="14" x="2" y="6" rx="2" />
-          </svg>
-        </span>
-        <div class="min-w-0">
-          <h1 class="text-xl font-semibold tracking-tight text-stone-900">同频——人岗智配Agent</h1>
-          <p class="mt-0.5 text-sm leading-relaxed text-stone-500">
-            上传简历、贴上岗位 JD，看看你们的匹配度，并拿到具体的修改建议。
+    <!-- 对话区：整块高度固定，只有这里自己滚 -->
+    <main class="min-h-0 flex-1 overflow-y-auto">
+      <div ref="listEl" class="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-5 pb-6 pt-8 sm:px-8">
+
+        <!-- 空状态 -->
+        <div v-if="!messages.length && !loading" class="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
+          <span class="grid h-11 w-11 place-items-center rounded-full bg-amber-100 text-amber-600">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+            </svg>
+          </span>
+          <p class="text-sm font-medium text-stone-700">把简历和岗位对一对</p>
+          <p class="max-w-xs text-sm leading-relaxed text-stone-500">
+            先在下面传一份简历，再把岗位 JD 粘贴进来发给我。
           </p>
         </div>
-      </header>
 
-      <!-- 输入区：简历 + JD -->
-      <div class="grid gap-5 md:grid-cols-2">
+        <!-- 消息列表 -->
+        <template v-for="m in messages" :key="m.id">
 
-        <!-- 简历 -->
-        <section class="flex flex-col rounded-lg border border-stone-200/80 bg-white p-5 shadow-sm">
-          <div class="mb-3 flex items-center gap-2">
-            <span class="grid h-6 w-6 place-items-center rounded-md bg-amber-50 text-amber-600">
-              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-                <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-              </svg>
-            </span>
-            <h2 class="text-sm font-semibold text-stone-800">简历</h2>
-            <span class="ml-auto text-xs text-stone-400">PDF</span>
+          <!-- 我发的 -->
+          <div v-if="m.role === 'user'" class="flex justify-end">
+            <div v-if="m.kind === 'resume'" class="max-w-[85%] rounded-lg border border-amber-200/70 bg-amber-100/70 px-3.5 py-2.5">
+              <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 shrink-0 text-amber-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                </svg>
+                <span class="truncate text-sm text-stone-800">{{ m.fileName }}</span>
+              </div>
+              <p class="mt-1 pl-6 text-[11px] text-stone-500">简历 PDF</p>
+            </div>
+
+            <div v-else class="max-w-[85%] whitespace-pre-wrap rounded-lg border border-amber-200/70 bg-amber-100/70 px-3.5 py-2.5 text-sm leading-relaxed text-stone-800">{{ m.text }}</div>
           </div>
 
-          <label class="group flex flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 px-4 py-8 text-center transition hover:border-amber-400 hover:bg-amber-50/60">
-            <input type="file" accept=".pdf" class="hidden" @change="getResume">
-            <svg class="h-6 w-6 text-stone-400 transition group-hover:text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" x2="12" y1="3" y2="15" />
-            </svg>
-            <span class="text-sm font-medium text-stone-600 transition group-hover:text-amber-700">点击选择简历文件</span>
-            <span class="text-xs text-stone-400">支持 .pdf 格式</span>
-          </label>
+          <!-- 助手回的 -->
+          <div v-else class="flex justify-start">
 
-          <div v-if="uploading" class="mt-3 flex items-center gap-2 text-xs text-stone-500">
-            <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            正在解析简历…
+            <!-- 匹配结果 -->
+            <div v-if="m.kind === 'result'" class="w-full max-w-[95%] rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+              <div class="flex flex-col items-center gap-4 sm:flex-row">
+                <div class="relative h-20 w-20 shrink-0">
+                  <svg class="h-20 w-20 -rotate-90" viewBox="0 0 80 80">
+                    <circle cx="40" cy="40" r="34" fill="none" stroke="#ece9e4" stroke-width="7" />
+                    <circle
+                      cx="40" cy="40" r="34" fill="none"
+                      :stroke="toneOf(m.score).ring" stroke-width="7" stroke-linecap="round"
+                      :stroke-dasharray="CIRCUMFERENCE" :stroke-dashoffset="dashOffsetOf(m.score)"
+                      style="transition: stroke-dashoffset 700ms ease"
+                    />
+                  </svg>
+                  <div class="absolute inset-0 grid place-items-center">
+                    <div class="text-center">
+                      <div class="text-lg font-semibold leading-none" :class="toneOf(m.score).text">{{ Math.round(m.score) }}</div>
+                      <div class="mt-1 text-[10px] text-stone-500">匹配度</div>
+                    </div>
+                  </div>
+                </div>
+
+                <p class="text-sm leading-relaxed text-stone-500">{{ summaryOf(m.score) }}</p>
+              </div>
+
+              <div class="mt-4 border-t border-stone-100 pt-4">
+                <div class="mb-3 flex items-center gap-2">
+                  <svg class="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
+                    <path d="M9 18h6" />
+                    <path d="M10 22h4" />
+                  </svg>
+                  <h3 class="text-sm font-semibold text-stone-800">改进建议</h3>
+                  <span v-if="m.suggestions.length" class="ml-auto text-xs text-stone-400">{{ m.suggestions.length }} 条</span>
+                </div>
+
+                <ul v-if="m.suggestions.length" class="space-y-2">
+                  <li v-for="(tip, i) in m.suggestions" :key="i" class="flex gap-3 rounded-md bg-stone-50 px-3 py-2.5">
+                    <span class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-amber-100 text-[11px] font-semibold text-amber-700">
+                      {{ i + 1 }}
+                    </span>
+                    <MarkdownText :source="tip" inline />
+                  </li>
+                </ul>
+
+                <div v-else class="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-3 text-sm text-emerald-700">
+                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.801 10A10 10 0 1 1 17 3.335" />
+                    <path d="m9 11 3 3L22 4" />
+                  </svg>
+                  简历和岗位要求高度吻合，暂时没有需要补充的地方。
+                </div>
+
+                <div class="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-3 text-sm text-emerald-700">
+                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.801 10A10 10 0 1 1 17 3.335" />
+                    <path d="m9 11 3 3L22 4" />
+                  </svg>
+                  如果您有疑问，可以继续想我提问~
+                </div>
+              </div>
+            </div>
+
+            <!-- 普通文字：模型回的是 Markdown，交给组件渲染 -->
+            <div v-else class="max-w-[85%] rounded-lg border border-stone-200 bg-white px-3.5 py-2.5 shadow-sm">
+              <MarkdownText :source="m.text" />
+            </div>
           </div>
+        </template>
 
-          <div v-else-if="resumeFile" class="mt-3 flex items-center gap-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2">
-            <svg class="h-4 w-4 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-            </svg>
-            <span class="truncate text-xs text-emerald-800">{{ resumeFile.name }}</span>
+        <!-- 正在分析 -->
+        <div v-if="loading" class="flex justify-start">
+          <div class="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-4 py-3 shadow-sm">
+            <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300"></span>
+            <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300" style="animation-delay: 150ms"></span>
+            <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300" style="animation-delay: 300ms"></span>
           </div>
-        </section>
-
-        <!-- 岗位描述 -->
-        <section class="flex flex-col rounded-lg border border-stone-200/80 bg-white p-5 shadow-sm">
-          <div class="mb-3 flex items-center gap-2">
-            <span class="grid h-6 w-6 place-items-center rounded-md bg-amber-50 text-amber-600">
-              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect width="20" height="14" x="2" y="6" rx="2" />
-                <path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-              </svg>
-            </span>
-            <h2 class="text-sm font-semibold text-stone-800">岗位描述</h2>
-          </div>
-
-          <textarea
-            v-model="jd"
-            rows="8"
-            placeholder="把岗位职责、任职要求粘贴到这里…"
-            class="min-h-44 w-full flex-1 resize-none rounded-lg border border-stone-200 bg-stone-50/60 p-3 text-sm leading-relaxed text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-100"
-          ></textarea>
-
-          <div class="mt-2 text-right text-xs text-stone-400">{{ jd.trim().length }} 字</div>
-        </section>
+        </div>
       </div>
+    </main>
 
-      <!-- 操作区 -->
-      <div class="flex flex-col gap-3">
-        <button
-          class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-6 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:bg-stone-300 sm:w-auto sm:self-start sm:px-8"
-          :disabled="loading || uploading"
-          @click="match"
-        >
-          <svg v-if="loading" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-          </svg>
-          <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-            <path d="M20 3v4" />
-            <path d="M22 5h-4" />
-            <path d="M4 17v2" />
-            <path d="M5 18H3" />
-          </svg>
-          {{ loading ? "分析中…" : "开始匹配" }}
-        </button>
+    <!-- 底部输入：常驻窗口底部，不参与滚动 -->
+    <div class="border-t border-stone-200/70 bg-[#f7f6f3]">
+      <div class="mx-auto w-full max-w-3xl px-5 py-4 sm:px-8">
 
-        <div v-if="error" class="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
-          <svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div v-if="error" class="mb-2 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+          <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
             <line x1="12" x2="12" y1="8" y2="12" />
             <line x1="12" x2="12.01" y1="16" y2="16" />
           </svg>
           <span>{{ error }}</span>
         </div>
-      </div>
 
-      <!-- 结果 -->
-      <section v-if="hasResult" class="rounded-lg border border-stone-200/80 bg-white p-5 shadow-sm sm:p-6">
-        <div class="flex flex-col items-center gap-5 sm:flex-row sm:gap-6">
-          <div class="relative h-28 w-28 shrink-0">
-            <svg class="h-28 w-28 -rotate-90" viewBox="0 0 80 80">
-              <circle cx="40" cy="40" r="34" fill="none" stroke="#ece9e4" stroke-width="7" />
-              <circle
-                cx="40" cy="40" r="34" fill="none"
-                :stroke="tone.ring" stroke-width="7" stroke-linecap="round"
-                :stroke-dasharray="CIRCUMFERENCE" :stroke-dashoffset="dashOffset"
-                style="transition: stroke-dashoffset 700ms ease"
-              />
+        <!-- 当前简历状态 -->
+        <div class="mb-2 flex items-center gap-2">
+          <span v-if="uploading" class="inline-flex items-center gap-1.5 text-xs text-stone-500">
+            <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
             </svg>
-            <div class="absolute inset-0 grid place-items-center">
-              <div class="text-center">
-                <div class="text-2xl font-semibold leading-none" :class="tone.text">{{ scoreText }}</div>
-                <div class="mt-1 text-[11px] text-stone-400">匹配度</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="min-w-0 flex-1 text-center sm:text-left">
-            <h2 class="text-base font-semibold text-stone-900">匹配分析</h2>
-            <p class="mt-1 text-sm leading-relaxed text-stone-500">{{ scoreSummary }}</p>
-          </div>
+            正在解析简历…
+          </span>
+          <span v-else-if="resumeFile" class="inline-flex max-w-full items-center gap-1.5 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1 text-xs text-emerald-800">
+            <svg class="h-3.5 w-3.5 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+            </svg>
+            <span class="truncate">{{ resumeFile.name }}</span>
+          </span>
+          <span v-else class="text-xs text-stone-400">还没有简历</span>
         </div>
 
-        <div class="mt-5 border-t border-stone-100 pt-5">
-          <div class="mb-3 flex items-center gap-2">
-            <svg class="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
-              <path d="M9 18h6" />
-              <path d="M10 22h4" />
-            </svg>
-            <h3 class="text-sm font-semibold text-stone-800">改进建议</h3>
-            <span v-if="suggestions.length" class="ml-auto text-xs text-stone-400">{{ suggestions.length }} 条</span>
-          </div>
+        <!-- 输入框 -->
+        <div class="rounded-lg border border-stone-200 bg-white p-2 shadow-sm transition focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-100">
+          <textarea
+            ref="composerEl"
+            v-model="userInput"
+            rows="1"
+            placeholder="把岗位 JD 粘贴到这里，Enter 发送，Shift + Enter 换行"
+            class="field-sizing-content max-h-40 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-relaxed text-stone-800 placeholder:text-stone-400 focus:outline-none"
+            @keydown="onComposerKeydown"
+          ></textarea>
 
-          <ul v-if="suggestions.length" class="space-y-2">
-            <li
-              v-for="(tip, i) in suggestions"
-              :key="i"
-              class="flex gap-3 rounded-md bg-stone-50 px-3 py-2.5"
+          <div class="flex items-center justify-between gap-2 px-0.5 pt-1">
+            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-700 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-amber-300">
+              <input type="file" accept=".pdf" class="sr-only" @change="getResume">
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+              {{ resumeFile ? "换一份简历" : "上传简历" }}
+            </label>
+
+            <button
+              type="button"
+              class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-500 text-white transition hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:bg-stone-300"
+              :disabled="loading || uploading || !userInput.trim()"
+              aria-label="发送"
+              @click="send"
             >
-              <span class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-amber-100 text-[11px] font-semibold text-amber-700">
-                {{ i + 1 }}
-              </span>
-              <span class="text-sm leading-relaxed text-stone-600">{{ tip }}</span>
-            </li>
-          </ul>
-
-          <div v-else class="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-3 text-sm text-emerald-700">
-            <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21.801 10A10 10 0 1 1 17 3.335" />
-              <path d="m9 11 3 3L22 4" />
-            </svg>
-            简历和岗位要求高度吻合，暂时没有需要补充的地方。
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 19V5" />
+                <path d="m5 12 7-7 7 7" />
+              </svg>
+            </button>
           </div>
         </div>
-      </section>
 
-      <footer class="pt-2 text-center text-xs text-stone-400 sm:text-left">
-        分析结果由大模型生成，建议结合自己的实际情况判断。
-      </footer>
+        <p class="mt-2 text-center text-[11px] text-stone-400">分析结果由大模型生成，建议结合实际情况判断。</p>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 77px 是顶部粘性表头的高度：整页正好占一屏，多出来的内容由中间那块自己滚 */
+.chat-shell {
+  height: calc(100vh - 77px);
+  height: calc(100dvh - 77px);
+}
+</style>

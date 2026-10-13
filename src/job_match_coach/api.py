@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from job_match_coach.graph import graph
 from job_match_coach.supabase_client import get_supabase
+from job_match_coach.llm import ask_messages
 
 app = FastAPI(title="同频——人岗智配Agent")
 
@@ -46,8 +47,29 @@ def match(body: MatchRequest) -> MatchResponse:
         "suggestions": response["suggestions"]
     }
 
+# 多轮对话
+class ChatHistory(BaseModel):
+    resume_id: str
+    jd: str
+    history: list[dict]
+
+@app.post("/chat")
+def chat(body: ChatHistory):
+    resume = RESUME_STORE.get(body.resume_id)
+
+    if not resume:
+        raise HTTPException(status_code=404, detail="简历不存在")
+
+    messages = [
+        { "role": "system", "content": f"你是一名专业的人岗匹配助手，附上简历摘要{resume} 和 JD {body.jd}，就用户需求给出建议"},
+        *body.history # 展开写法
+    ]
+
+    return { "reply": ask_messages(messages) }
+
+
 # 上传简历
-@app.post("/upload-resume")
+@app.post("/upload_resume")
 async def upload_resume(file: UploadFile = File(...)):
     content = await file.read()
     reader = PdfReader(BytesIO(content))
