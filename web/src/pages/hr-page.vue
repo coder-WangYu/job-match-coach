@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import MarkdownText from '../components/markdown-text.vue'
 
 const API_BASE = "http://127.0.0.1:8000"
@@ -16,8 +16,13 @@ const candidates = ref([])
 const screening = ref(false)
 const error = ref("")
 
-// 当前展开了追问的候选人
-const openId = ref("")
+// 追问抽屉当前对着哪位候选人，空字符串表示抽屉关着
+const activeId = ref("")
+const drawerList = ref(null)
+const drawerInput = ref(null)
+
+// 当前选中的卡片，选中后卡片底部才出现操作按钮
+const selectedId = ref("")
 
 // 三档归类，顺序就是页面上从左到右的顺序
 const CATEGORIES = [
@@ -49,10 +54,26 @@ const CATEGORIES = [
 
 const CIRCUMFERENCE = 2 * Math.PI * 34
 
+// 没归进三档时的中性配色
+const NEUTRAL_TONE = {
+    dot: "bg-stone-300",
+    chip: "border-stone-200 bg-stone-100 text-stone-500",
+    ring: "#a8a29e",
+    text: "text-stone-500",
+}
+
+function toneFor(category) {
+    return CATEGORIES.find((item) => item.key === category) || NEUTRAL_TONE
+}
+
 function dashOffsetOf(score) {
     const percent = Math.min(Math.max(score, 0), 100) / 100
     return CIRCUMFERENCE * (1 - percent)
 }
+
+const activeCandidate = computed(
+    () => candidates.value.find((item) => item.resume_id === activeId.value) || null
+)
 
 // 按三档归类，每档内部按分数从高到低
 const groups = computed(() =>
@@ -76,6 +97,15 @@ function nameOf(resumeId) {
 
 function shortId(resumeId) {
     return resumeId.slice(0, 8)
+}
+
+// 点卡片是选中 / 取消选中
+function toggleSelect(item) {
+    selectedId.value = selectedId.value === item.resume_id ? "" : item.resume_id
+}
+
+// TODO：后端还没有「按 resume_id 取简历正文」的接口，接上之后在这里打开简历
+function viewResume(item) {
 }
 
 // 上传简历：支持一次选多份，也支持分几次陆续加进来
@@ -125,7 +155,8 @@ async function startScreen() {
     }
 
     screening.value = true
-    openId.value = ""
+    activeId.value = ""
+    selectedId.value = ""
 
     try {
         const res = await fetch(`${API_BASE}/hr/screen`, {
@@ -154,8 +185,22 @@ async function startScreen() {
     }
 }
 
-function toggleAsk(item) {
-    openId.value = openId.value === item.resume_id ? "" : item.resume_id
+// 打开抽屉，顺便把焦点放进输入框
+async function openAsk(item) {
+    activeId.value = item.resume_id
+    await nextTick()
+    drawerInput.value?.focus()
+    drawerList.value?.scrollTo({ top: drawerList.value.scrollHeight })
+}
+
+function closeAsk() {
+    activeId.value = ""
+}
+
+// 新消息进来后把抽屉里的对话滚到底
+async function scrollDrawerToBottom() {
+    await nextTick()
+    drawerList.value?.scrollTo({ top: drawerList.value.scrollHeight, behavior: "smooth" })
 }
 
 // 就这位候选人追问一句，后端按 resume_id 分线程记住上下文
@@ -169,6 +214,7 @@ async function ask(item) {
     item.chat.push({ role: "user", text })
     item.chatInput = ""
     item.chatLoading = true
+    scrollDrawerToBottom()
 
     try {
         const res = await fetch(`${API_BASE}/chat`, {
@@ -185,6 +231,7 @@ async function ask(item) {
         error.value = err.message
     } finally {
         item.chatLoading = false
+        scrollDrawerToBottom()
     }
 }
 
@@ -197,17 +244,34 @@ function onAskKeydown(event, item) {
     ask(item)
 }
 
+// Esc 关抽屉；开着的时候锁住页面滚动，免得底下的看板跟着动
+function onEsc(event) {
+    if (event.key === "Escape") closeAsk()
+}
+
+watch(activeId, (value) => {
+    document.body.style.overflow = value ? "hidden" : ""
+})
+
+onMounted(() => document.addEventListener("keydown", onEsc))
+
+onBeforeUnmount(() => {
+    document.removeEventListener("keydown", onEsc)
+    document.body.style.overflow = ""
+})
+
 // 换一批简历重新筛
 function clearAll() {
     resumes.value = []
     candidates.value = []
-    openId.value = ""
+    activeId.value = ""
+    selectedId.value = ""
     error.value = ""
 }
 </script>
 
 <template>
-    <div class="min-h-screen bg-[#f7f6f3] text-stone-800 antialiased">
+    <div class="page-shell overflow-y-auto bg-[#f7f6f3] text-stone-800 antialiased">
         <div class="mx-auto w-full max-w-6xl px-5 py-8 sm:px-8">
 
             <header class="mb-6">
@@ -353,7 +417,14 @@ function clearAll() {
                             <article
                                 v-for="item in group.items"
                                 :key="item.resume_id"
-                                class="rounded-lg border border-stone-200/80 bg-white p-3.5 shadow-sm"
+                                tabindex="0"
+                                class="cursor-pointer rounded-lg border bg-white p-3.5 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                                :class="selectedId === item.resume_id
+                                    ? 'border-amber-300 ring-1 ring-amber-200'
+                                    : 'border-stone-200/80 hover:border-stone-300'"
+                                @click="toggleSelect(item)"
+                                @keydown.enter.prevent="toggleSelect(item)"
+                                @keydown.space.prevent="toggleSelect(item)"
                             >
                                 <div class="flex items-start gap-3">
                                     <div class="relative h-11 w-11 shrink-0">
@@ -378,58 +449,30 @@ function clearAll() {
                                     </div>
                                 </div>
 
-                                <button
-                                    type="button"
-                                    class="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-stone-200 px-2 py-1.5 text-xs font-medium text-stone-600 transition hover:border-stone-300 hover:bg-stone-50 hover:text-stone-800"
-                                    :aria-expanded="openId === item.resume_id"
-                                    @click="toggleAsk(item)"
-                                >
-                                    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
-                                    </svg>
-                                    {{ openId === item.resume_id ? "收起" : "追问这位候选人" }}
-                                </button>
+                                <!-- 选中后卡片底部才出现的操作，左右分布 -->
+                                <div v-if="selectedId === item.resume_id" class="mt-3 grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                                        @click.stop="openAsk(item)"
+                                    >
+                                        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+                                        </svg>
+                                        追问
+                                    </button>
 
-                                <!-- 展开的追问线程 -->
-                                <div v-if="openId === item.resume_id" class="mt-3 rounded-md border border-stone-200 bg-stone-50/70 p-2.5">
-                                    <div v-if="item.chat.length" class="mb-2 space-y-2">
-                                        <template v-for="(msg, i) in item.chat" :key="i">
-                                            <div v-if="msg.role === 'user'" class="text-right">
-                                                <span class="inline-block max-w-[90%] rounded-md bg-amber-100/80 px-2.5 py-1.5 text-left text-xs leading-relaxed text-stone-700">{{ msg.text }}</span>
-                                            </div>
-                                            <div v-else class="rounded-md border border-stone-200 bg-white px-2.5 py-2">
-                                                <MarkdownText :source="msg.text" />
-                                            </div>
-                                        </template>
-                                    </div>
-
-                                    <div v-if="item.chatLoading" class="mb-2 flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 py-2">
-                                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300"></span>
-                                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300" style="animation-delay: 150ms"></span>
-                                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300" style="animation-delay: 300ms"></span>
-                                    </div>
-
-                                    <div class="flex items-end gap-2">
-                                        <textarea
-                                            v-model="item.chatInput"
-                                            rows="1"
-                                            placeholder="追问一句，比如「他做过哪些性能优化？」"
-                                            class="field-sizing-content max-h-24 min-w-0 flex-1 resize-none rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                            @keydown="onAskKeydown($event, item)"
-                                        ></textarea>
-                                        <button
-                                            type="button"
-                                            class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-amber-500 text-white transition hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:bg-stone-300"
-                                            :disabled="item.chatLoading || !item.chatInput.trim()"
-                                            aria-label="发送"
-                                            @click="ask(item)"
-                                        >
-                                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                <path d="M12 19V5" />
-                                                <path d="m5 12 7-7 7 7" />
-                                            </svg>
-                                        </button>
-                                    </div>
+                                    <button
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-stone-200 px-2 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-50 hover:text-stone-800"
+                                        @click.stop="viewResume(item)"
+                                    >
+                                        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                                            <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                                        </svg>
+                                        查看简历
+                                    </button>
                                 </div>
                             </article>
 
@@ -454,6 +497,143 @@ function clearAll() {
             <footer class="pt-10 text-center text-xs text-stone-400">
                 筛选结果由大模型生成，建议结合实际情况判断。
             </footer>
+
+            <!-- 追问抽屉：从页面最右侧滑出 -->
+            <Transition name="fade">
+                <div v-if="activeCandidate" class="fixed inset-0 z-40 bg-stone-900/20" @click="closeAsk"></div>
+            </Transition>
+
+            <Transition name="slide">
+                <aside
+                    v-if="activeCandidate"
+                    class="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-stone-200 bg-[#f7f6f3] shadow-2xl"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="候选人追问"
+                >
+                    <!-- 顶部：候选人信息 -->
+                    <header class="flex shrink-0 items-start gap-3 border-b border-stone-200/70 px-5 py-4">
+                        <div class="relative h-11 w-11 shrink-0">
+                            <svg class="h-11 w-11 -rotate-90" viewBox="0 0 80 80">
+                                <circle cx="40" cy="40" r="34" fill="none" stroke="#ece9e4" stroke-width="7" />
+                                <circle
+                                    cx="40" cy="40" r="34" fill="none"
+                                    :stroke="toneFor(activeCandidate.category).ring" stroke-width="7" stroke-linecap="round"
+                                    :stroke-dasharray="CIRCUMFERENCE" :stroke-dashoffset="dashOffsetOf(activeCandidate.score)"
+                                />
+                            </svg>
+                            <div class="absolute inset-0 grid place-items-center">
+                                <span class="text-[11px] font-semibold leading-none" :class="toneFor(activeCandidate.category).text">
+                                    {{ Math.round(activeCandidate.score) }}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="min-w-0 flex-1">
+                            <p class="truncate text-sm font-medium text-stone-800">{{ nameOf(activeCandidate.resume_id) }}</p>
+                            <div class="mt-1.5 flex items-center gap-2">
+                                <span class="rounded-md border px-1.5 py-0.5 text-[11px] font-medium" :class="toneFor(activeCandidate.category).chip">
+                                    {{ activeCandidate.category }}
+                                </span>
+                                <span class="text-[11px] text-stone-400">ID {{ shortId(activeCandidate.resume_id) }}</span>
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            class="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md text-stone-400 transition hover:bg-stone-200/60 hover:text-stone-700"
+                            aria-label="关闭追问"
+                            @click="closeAsk"
+                        >
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 6 6 18" />
+                                <path d="m6 6 12 12" />
+                            </svg>
+                        </button>
+                    </header>
+
+                    <!-- 中间：对话内容，自己滚 -->
+                    <div ref="drawerList" class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                        <p v-if="!activeCandidate.chat.length && !activeCandidate.chatLoading" class="pt-12 text-center text-xs leading-relaxed text-stone-400">
+                            还没有追问记录<br />问点具体的，比如「他做过哪些性能优化？」
+                        </p>
+
+                        <template v-for="(msg, i) in activeCandidate.chat" :key="i">
+                            <div v-if="msg.role === 'user'" class="flex justify-end">
+                                <span class="max-w-[85%] rounded-lg border border-amber-200/70 bg-amber-100/70 px-3 py-2 text-sm leading-relaxed text-stone-800">{{ msg.text }}</span>
+                            </div>
+                            <div v-else class="flex justify-start">
+                                <div class="max-w-[92%] rounded-lg border border-stone-200 bg-white px-3.5 py-2.5 shadow-sm">
+                                    <MarkdownText :source="msg.text" />
+                                </div>
+                            </div>
+                        </template>
+
+                        <div v-if="activeCandidate.chatLoading" class="flex justify-start">
+                            <div class="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-4 py-3 shadow-sm">
+                                <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300"></span>
+                                <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300" style="animation-delay: 150ms"></span>
+                                <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-stone-300" style="animation-delay: 300ms"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 底部：输入框 -->
+                    <footer class="shrink-0 border-t border-stone-200/70 px-5 py-4">
+                        <div class="flex items-end gap-2 rounded-lg border border-stone-200 bg-white p-2 shadow-sm transition focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-100">
+                            <textarea
+                                ref="drawerInput"
+                                v-model="activeCandidate.chatInput"
+                                rows="1"
+                                placeholder="追问一句…"
+                                class="field-sizing-content max-h-32 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-stone-800 placeholder:text-stone-400 focus:outline-none"
+                                @keydown="onAskKeydown($event, activeCandidate)"
+                            ></textarea>
+                            <button
+                                type="button"
+                                class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-500 text-white transition hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:bg-stone-300"
+                                :disabled="activeCandidate.chatLoading || !activeCandidate.chatInput.trim()"
+                                aria-label="发送"
+                                @click="ask(activeCandidate)"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 19V5" />
+                                    <path d="m5 12 7-7 7 7" />
+                                </svg>
+                            </button>
+                        </div>
+                    </footer>
+                </aside>
+            </Transition>
         </div>
     </div>
 </template>
+
+<style scoped>
+/* 77px 是顶部粘性表头的高度：内容区占满剩下的一屏并自己滚，不跟表头抢空间 */
+.page-shell {
+    height: calc(100vh - 77px);
+    height: calc(100dvh - 77px);
+}
+
+/* 抽屉从右侧滑入，遮罩同时淡入 */
+.slide-enter-active,
+.slide-leave-active {
+    transition: transform 240ms ease;
+}
+
+.slide-enter-from,
+.slide-leave-to {
+    transform: translateX(100%);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+    transition: opacity 200ms ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+    opacity: 0;
+}
+</style>
