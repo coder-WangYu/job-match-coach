@@ -20,7 +20,6 @@ def chat(body: ChatRequest):
         {"messages": [user_message]},
         config={"configurable": {"thread_id": body.resume_id}},
     )
-    print(response)
 
     reply = response["messages"][-1].content
 
