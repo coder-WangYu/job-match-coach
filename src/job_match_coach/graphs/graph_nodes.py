@@ -1,6 +1,7 @@
 import json
-from job_match_coach.graphs.graph_state import MatchState
+from job_match_coach.graphs.graph_state import ChatState, MatchState
 from job_match_coach.llm.llm import ask
+
 
 def extract_skills(state: MatchState) -> dict:
     prompt = f"""
@@ -12,6 +13,7 @@ def extract_skills(state: MatchState) -> dict:
     skills = json.loads(raw)
 
     return {"skills": skills}
+
 
 def score_and_suggest(state: MatchState) -> dict:
     prompt = f"""
@@ -27,3 +29,16 @@ def score_and_suggest(state: MatchState) -> dict:
     suggestions = json.loads(raw)["suggestions"]
 
     return {"score": score, "suggestions": suggestions}
+
+
+def chat_by_messages(state: ChatState) -> dict:
+    prompt = f"""
+        你是一个专业的HR/面试官，你需要：
+            根据历史对话{state['messages']}回答用户问题
+        
+        要求：内容精炼，像HR/面试官一样正常对话，不要长篇大论
+    """
+
+    raw = ask(prompt)
+
+    return {"messages": [{"role": "assistant", "content": raw}]}

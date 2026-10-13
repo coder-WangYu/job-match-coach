@@ -10,8 +10,6 @@ builder.add_edge(START, "extract_skills")
 builder.add_edge("extract_skills", "score_and_suggest")
 builder.add_edge("score_and_suggest", END)
 
-graph = builder.compile()
+memory = MemorySaver()
 
-# memory = MemorySaver()
-
-# graph = builder.compile(checkpointer=memory)
+graph = builder.compile(checkpointer=memory)
