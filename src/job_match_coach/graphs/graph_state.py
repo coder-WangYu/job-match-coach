@@ -12,3 +12,9 @@ class MatchState(TypedDict):
 
 class ChatState(TypedDict):
     messages: Annotated[list, add_messages]
+
+
+class HrScreenState(TypedDict):
+    jd: str
+    resumes: list[dict]
+    results: list[dict]

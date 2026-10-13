@@ -1,5 +1,6 @@
 import json
-from job_match_coach.graphs.graph_state import ChatState, MatchState
+from unittest import result
+from job_match_coach.graphs.graph_state import ChatState, HrScreenState, MatchState
 from job_match_coach.llm.llm import ask
 
 
@@ -18,7 +19,7 @@ def extract_skills(state: MatchState) -> dict:
 def score_and_suggest(state: MatchState) -> dict:
     prompt = f"""
         你是一个专业的求职助手，你需要：
-            比对岗位要求信息{state["jd"]}和求职者简历{state["resume"]}求职者技能{state["skills"]}，
+            比对岗位要求信息{state["jd"]}和求职者简历{state["resume"]}，
             并分析出匹配分数（score）和改进建议（suggestions）
         
         要求：必须返回JSON格式（包含score和suggestions）
@@ -42,3 +43,18 @@ def chat_by_messages(state: ChatState) -> dict:
     raw = ask(prompt)
 
     return {"messages": [{"role": "assistant", "content": raw}]}
+
+
+def hr_match_score(state: HrScreenState) -> dict:
+    prompt = f"""
+        你是一个专业的求职助手，你需要：
+            比对岗位要求信息{state["jd"]}和多份求职者简历{state["resumes"]}，
+            并分析出每一份简历的匹配分数（score）
+        
+        要求：只返回 JSON 数组，每项含 resume_id 和 score。
+    """
+
+    raw = ask(prompt)
+    results = json.loads(raw)
+
+    return {"results": results}
