@@ -25,8 +25,6 @@ def match(body: MatchRequest) -> MatchResponse:
     if not resume:
         raise HTTPException(status_code=404, detail="简历不存在")
 
-    config = {"configurable": {"thread_id": body.resume_id}}
-
     response = graph.invoke(
         {
             "resume": resume,
@@ -34,14 +32,15 @@ def match(body: MatchRequest) -> MatchResponse:
             "skills": [],
             "score": 0,
             "suggestions": [],
-        },
-        config=config,
+        }
     )
 
     score = response["score"]
     suggestions = response["suggestions"]
 
     # 把匹配结果塞进对话历史
+    config = {"configurable": {"thread_id": body.resume_id}}
+
     chat_graph.graph.update_state(
         config,
         {

@@ -8,6 +8,4 @@ builder.add_node("chat_by_messages", chat_by_messages)
 builder.add_edge(START, "chat_by_messages")
 builder.add_edge("chat_by_messages", END)
 
-memory = MemorySaver()
-
-graph = builder.compile(checkpointer=memory)
+graph = builder.compile(checkpointer=MemorySaver())
