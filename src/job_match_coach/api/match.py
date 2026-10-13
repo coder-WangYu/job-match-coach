@@ -38,7 +38,7 @@ def match(body: MatchRequest) -> MatchResponse:
     score = response["score"]
     suggestions = response["suggestions"]
 
-    # 把匹配结果塞进对话历史
+    # 把匹配结果、简历、JD，一并塞进对话历史
     config = {"configurable": {"thread_id": body.resume_id}}
 
     chat_graph.graph.update_state(
