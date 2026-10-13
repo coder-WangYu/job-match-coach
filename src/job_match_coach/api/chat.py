@@ -8,7 +8,6 @@ router = APIRouter()
 # 多轮对话
 class ChatRequest(BaseModel):
     resume_id: str
-    jd: str
     user_text: str
 
 

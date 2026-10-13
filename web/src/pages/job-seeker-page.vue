@@ -162,7 +162,6 @@ async function send() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           resume_id: resumeId.value, 
-          jd: jdText.value, 
           user_text: text
         })
       })

@@ -1,4 +1,6 @@
+import json
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from job_match_coach.core.store import RESUME_STORE
 from job_match_coach.graphs import chat_graph
@@ -18,8 +20,8 @@ class MatchResponse(BaseModel):
     suggestions: list[str]
 
 
-@router.post("/match", response_model=MatchResponse)
-def match(body: MatchRequest) -> MatchResponse:
+@router.post("/match")
+def match(body: MatchRequest):
     resume = RESUME_STORE.get(body.resume_id)
 
     if not resume:
@@ -29,7 +31,6 @@ def match(body: MatchRequest) -> MatchResponse:
         {
             "resume": resume,
             "jd": body.jd,
-            "skills": [],
             "score": 0,
             "suggestions": [],
         }
