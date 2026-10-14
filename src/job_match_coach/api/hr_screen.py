@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from job_match_coach.core.store import RESUME_STORE
+from job_match_coach.graphs import chat_graph
 from job_match_coach.graphs.screen_graph import graph
 
 
@@ -45,5 +46,21 @@ def screen(body: ScreenRequest):
             category = "淘汰"
 
         result["category"] = category
+
+        # 把匹配分、处理建议、简历、JD，一并塞进对话历史
+        resume_id = result["resume_id"]
+        config = {"configurable": {"thread_id": resume_id}}
+        chat_graph.graph.update_state(
+            config,
+            {
+                "messages": [
+                    {"role": "system", "content": f"简历：{RESUME_STORE.get(resume_id)}，JD：{body.jd}"},
+                    {
+                        "role": "assistant",
+                        "content": f"匹配分：{result['score']}；处理建议：{result['category']}",
+                    },
+                ]
+            },
+        )
 
     return {"results": screenResults}
