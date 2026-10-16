@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from job_match_coach.api import auth, hr_screen, upload, match, chat
+from job_match_coach.api import auth, head_hunter, hr_screen, upload, match, chat
 
 app = FastAPI(title="同频——人岗智配Agent")
 
@@ -21,3 +21,4 @@ app.include_router(upload.router)
 app.include_router(match.router)
 app.include_router(chat.router)
 app.include_router(hr_screen.router, prefix="/hr")
+app.include_router(head_hunter.router, prefix="/head-hunter")
