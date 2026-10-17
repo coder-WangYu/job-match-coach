@@ -1,6 +1,9 @@
+import hashlib
 import json
-from fastapi import APIRouter, File, HTTPException, UploadFile
-
+from fastapi import APIRouter, File, UploadFile
+from pydantic import BaseModel
+from job_match_coach.auth.supabase_client import get_supabase
+from job_match_coach.llm.embed import embed
 from job_match_coach.llm.llm import ask
 
 router = APIRouter()
@@ -35,3 +38,41 @@ async def jobs(file: UploadFile = File(...)):
     jobs = json.loads(raw)
 
     return {"jobs": jobs}
+
+
+class ImportRequest(BaseModel):
+    jobs: list[dict]
+
+
+@router.post("/jobs-import")
+def jobs_import(body: ImportRequest):
+    sb = get_supabase()
+    imported = 0
+    skipped = []
+
+    for job in body.jobs:
+        raw_text = job.get("raw_text").strip()
+        content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+
+        # 已有相同原文则跳过
+        exists = (
+            sb.table("jobs")
+            .select("id")
+            .eq("content_hash", content_hash)
+            .limit(1)
+            .execute()
+        )
+
+        if exists.data:
+            skipped.append(job)
+            continue
+
+        row = job | {
+            "content_hash": content_hash,
+            "embedding": embed(raw_text)
+        }
+
+        sb.table("jobs").insert(row).execute()
+        imported += 1
+
+    return {"imported": imported, "skipped": skipped}

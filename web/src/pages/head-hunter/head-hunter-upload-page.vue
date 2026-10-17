@@ -8,6 +8,7 @@ const drafts = ref([])
 const parsing = ref(false)
 const jobError = ref("")
 const importedCount = ref(null)
+const skippedContent = ref([])
 const importing = ref(false)
 
 // 正在编辑第几条，-1 表示没有在编辑
@@ -72,7 +73,7 @@ function startEdit(index) {
     editingIndex.value = index
     editBuffer.value = {
         title: job.title,
-        company: job.company,
+        edu: job.edu,
         location: job.location,
         salary: job.salary,
         tagsText: job.tags.join("、"),
@@ -92,7 +93,7 @@ function saveEdit() {
     drafts.value[index] = {
         ...drafts.value[index],
         title: editBuffer.value.title.trim() || "未命名岗位",
-        company: editBuffer.value.company.trim(),
+        edu: editBuffer.value.edu.trim(),
         location: editBuffer.value.location.trim(),
         salary: editBuffer.value.salary.trim(),
         tags: parseTags(editBuffer.value.tagsText),
@@ -110,8 +111,8 @@ async function importDrafts() {
     jobError.value = ""
 
     try {
-        // 约定的接口：POST /head-hunter/jobs/import，{ jobs: [...] } -> { imported: n }
-        const res = await fetch(`${API_BASE}/head-hunter/jobs/import`, {
+        // 约定的接口：POST /head-hunter/jobs-import，{ jobs: [...] } -> { imported: n }
+        const res = await fetch(`${API_BASE}/head-hunter/jobs-import`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -122,8 +123,10 @@ async function importDrafts() {
         if (!res.ok) throw new Error("入库失败：" + res.status)
 
         const data = await res.json()
-        importedCount.value = Number(data.imported) || drafts.value.length
         drafts.value = []
+
+        importedCount.value = Number(data.imported) || drafts.value.length
+        skippedContent.value = data.skipped
         cancelEdit()
     } catch (err) {
         jobError.value = err.message
@@ -137,8 +140,10 @@ async function importDrafts() {
     <div class="page-shell overflow-y-auto bg-[#f7f6f3] text-stone-800 antialiased">
         <div class="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8">
 
-            <router-link to="/head-hunter" class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition hover:text-stone-800">
-                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <router-link to="/head-hunter"
+                class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition hover:text-stone-800">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
                     <path d="m12 19-7-7 7-7" />
                     <path d="M19 12H5" />
                 </svg>
@@ -154,14 +159,17 @@ async function importDrafts() {
 
             <section class="rounded-lg border border-stone-200/80 bg-white p-5 shadow-sm">
                 <div v-if="parsing" class="flex items-center gap-2 text-xs text-stone-500">
-                    <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round">
                         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                     </svg>
                     正在解析文档…
                 </div>
 
-                <div v-else-if="jobError" class="mb-3 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
-                    <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <div v-else-if="jobError"
+                    class="mb-3 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                    <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10" />
                         <line x1="12" x2="12" y1="8" y2="12" />
                         <line x1="12" x2="12.01" y1="16" y2="16" />
@@ -169,8 +177,10 @@ async function importDrafts() {
                     <span>{{ jobError }}</span>
                 </div>
 
-                <div v-else-if="importedCount !== null" class="mb-3 flex items-center gap-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">
-                    <svg class="h-3.5 w-3.5 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <div v-else-if="importedCount !== null"
+                    class="mb-3 flex items-center gap-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">
+                    <svg class="h-3.5 w-3.5 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21.801 10A10 10 0 1 1 17 3.335" />
                         <path d="m9 11 3 3L22 4" />
                     </svg>
@@ -178,14 +188,18 @@ async function importDrafts() {
                 </div>
 
                 <!-- 还没解析出结果时：上传入口 -->
-                <label v-if="!drafts.length && !parsing" class="group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 px-4 py-14 text-center transition hover:border-amber-400 hover:bg-amber-50/60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-amber-300">
+                <label v-if="!drafts.length && !parsing"
+                    class="group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 px-4 py-14 text-center transition hover:border-amber-400 hover:bg-amber-50/60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-amber-300">
                     <input type="file" accept=".md" class="sr-only" @change="uploadJobs">
-                    <svg class="h-6 w-6 text-stone-400 transition group-hover:text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg class="h-6 w-6 text-stone-400 transition group-hover:text-amber-500" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                         <polyline points="17 8 12 3 7 8" />
                         <line x1="12" x2="12" y1="3" y2="15" />
                     </svg>
-                    <span class="text-sm font-medium text-stone-600 transition group-hover:text-amber-700">上传 JD 汇总文档</span>
+                    <span class="text-sm font-medium text-stone-600 transition group-hover:text-amber-700">上传 JD
+                        汇总文档</span>
                     <span class="text-xs text-stone-400">支持 .md，一份文档里可以放多个岗位</span>
                 </label>
 
@@ -207,34 +221,28 @@ async function importDrafts() {
                                     <p v-if="metaOf(job)" class="mt-0.5 text-xs text-stone-500">{{ metaOf(job) }}</p>
 
                                     <div v-if="job.tags.length" class="mt-1.5 flex flex-wrap gap-1.5">
-                                        <span
-                                            v-for="tag in job.tags"
-                                            :key="tag"
-                                            class="rounded-md border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[11px] text-stone-600"
-                                        >
+                                        <span v-for="tag in job.tags" :key="tag"
+                                            class="rounded-md border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[11px] text-stone-600">
                                             {{ tag }}
                                         </span>
                                     </div>
 
-                                    <p v-if="job.requirements" class="mt-1.5 line-clamp-2 text-xs leading-relaxed text-stone-500">
+                                    <p v-if="job.requirements"
+                                        class="mt-1.5 line-clamp-2 text-xs leading-relaxed text-stone-500">
                                         {{ job.requirements }}
                                     </p>
                                 </div>
 
                                 <div class="flex shrink-0 items-center gap-1.5">
-                                    <button
-                                        type="button"
+                                    <button type="button"
                                         class="cursor-pointer rounded-md border border-stone-200 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-50 hover:text-stone-800"
-                                        @click="openRawText(job)"
-                                    >
+                                        @click="openRawText(job)">
                                         显示原文
                                     </button>
 
-                                    <button
-                                        type="button"
+                                    <button type="button"
                                         class="cursor-pointer rounded-md border border-stone-200 px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-50 hover:text-stone-800"
-                                        @click="startEdit(index)"
-                                    >
+                                        @click="startEdit(index)">
                                         编辑
                                     </button>
                                 </div>
@@ -242,56 +250,33 @@ async function importDrafts() {
 
                             <!-- 编辑中 -->
                             <div v-else class="grid gap-2">
-                                <input
-                                    v-model="editBuffer.title"
-                                    placeholder="岗位名称"
-                                    class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                >
+                                <input v-model="editBuffer.title" placeholder="岗位名称"
+                                    class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
 
                                 <div class="grid gap-2 sm:grid-cols-3">
-                                    <input
-                                        v-model="editBuffer.company"
-                                        placeholder="公司"
-                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                    >
-                                    <input
-                                        v-model="editBuffer.location"
-                                        placeholder="城市"
-                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                    >
-                                    <input
-                                        v-model="editBuffer.salary"
-                                        placeholder="薪资"
-                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                    >
+                                    <input v-model="editBuffer.edu" placeholder="学历"
+                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
+                                    <input v-model="editBuffer.location" placeholder="城市"
+                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
+                                    <input v-model="editBuffer.salary" placeholder="薪资"
+                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
                                 </div>
 
-                                <input
-                                    v-model="editBuffer.tagsText"
-                                    placeholder="标签，用、分隔"
-                                    class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                >
+                                <input v-model="editBuffer.tagsText" placeholder="标签，用、分隔"
+                                    class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
 
-                                <textarea
-                                    v-model="editBuffer.requirements"
-                                    rows="2"
-                                    placeholder="任职要求"
-                                    class="w-full resize-none rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                                ></textarea>
+                                <textarea v-model="editBuffer.requirements" rows="2" placeholder="任职要求"
+                                    class="w-full resize-none rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"></textarea>
 
                                 <div class="flex justify-end gap-2">
-                                    <button
-                                        type="button"
+                                    <button type="button"
                                         class="cursor-pointer rounded-md px-2.5 py-1.5 text-xs text-stone-500 transition hover:bg-stone-100 hover:text-stone-800"
-                                        @click="cancelEdit"
-                                    >
+                                        @click="cancelEdit">
                                         取消
                                     </button>
-                                    <button
-                                        type="button"
+                                    <button type="button"
                                         class="cursor-pointer rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-amber-600"
-                                        @click="saveEdit"
-                                    >
+                                        @click="saveEdit">
                                         保存
                                     </button>
                                 </div>
@@ -300,9 +285,11 @@ async function importDrafts() {
                     </ul>
 
                     <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
-                        <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-amber-300">
+                        <label
+                            class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-amber-300">
                             <input type="file" accept=".md" class="sr-only" @change="uploadJobs">
-                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                                 <polyline points="17 8 12 3 7 8" />
                                 <line x1="12" x2="12" y1="3" y2="15" />
@@ -310,16 +297,15 @@ async function importDrafts() {
                             换一份文档
                         </label>
 
-                        <button
-                            type="button"
+                        <button type="button"
                             class="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:bg-stone-300"
-                            :disabled="importing"
-                            @click="importDrafts"
-                        >
-                            <svg v-if="importing" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                            :disabled="importing" @click="importDrafts">
+                            <svg v-if="importing" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round">
                                 <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                             </svg>
-                            <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21.801 10A10 10 0 1 1 17 3.335" />
                                 <path d="m9 11 3 3L22 4" />
                             </svg>
@@ -331,26 +317,20 @@ async function importDrafts() {
 
             <!-- 原文弹窗：按 Markdown 渲染 raw_text -->
             <Transition name="fade">
-                <div v-if="rawTextJob" class="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/25 p-5" @click="closeRawText">
-                    <div
-                        class="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-stone-200 bg-white shadow-xl"
-                        role="dialog"
-                        aria-modal="true"
-                        aria-label="岗位原文"
-                        @click.stop
-                    >
+                <div v-if="rawTextJob" class="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/25 p-5"
+                    @click="closeRawText">
+                    <div class="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-stone-200 bg-white shadow-xl"
+                        role="dialog" aria-modal="true" aria-label="岗位原文" @click.stop>
                         <header class="flex shrink-0 items-center gap-3 border-b border-stone-100 px-5 py-4">
                             <div class="min-w-0 flex-1">
                                 <h2 class="truncate text-sm font-semibold text-stone-800">{{ rawTextJob.title }}</h2>
                             </div>
 
-                            <button
-                                type="button"
+                            <button type="button"
                                 class="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
-                                aria-label="关闭"
-                                @click="closeRawText"
-                            >
-                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                aria-label="关闭" @click="closeRawText">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M18 6 6 18" />
                                     <path d="m6 6 12 12" />
                                 </svg>

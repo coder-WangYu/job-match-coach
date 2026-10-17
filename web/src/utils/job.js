@@ -7,7 +7,7 @@ export function normalizeJob(item, index) {
     return {
         id: item.id ?? item.job_id ?? `job-${index + 1}`,
         title: item.title ?? item.job_title ?? item.name ?? "未命名岗位",
-        company: item.company ?? "",
+        edu: item.edu ?? "",
         location: item.location ?? item.city ?? "",
         salary: item.salary ?? item.salary_range ?? "",
         tags: Array.isArray(item.tags) ? item.tags : (Array.isArray(item.skills) ? item.skills : []),
@@ -17,7 +17,7 @@ export function normalizeJob(item, index) {
 }
 
 export function metaOf(job) {
-    return [job?.company, job?.location, job?.salary].filter(Boolean).join(" · ")
+    return [job?.edu, job?.location, job?.salary].filter(Boolean).join(" · ")
 }
 
 // 标签用顿号或逗号分隔
