@@ -51,8 +51,13 @@ def jobs_import(body: ImportRequest):
     skipped = []
 
     for job in body.jobs:
-        raw_text = job.get("raw_text").strip()
-        content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+        hash_info = (
+            job.get("title").strip()
+            + job.get("location").strip()
+            + job.get("edu").strip()
+            + job.get("salary").strip()
+        )
+        content_hash = hashlib.sha256(hash_info.encode("utf-8")).hexdigest()
 
         # 已有相同原文则跳过
         exists = (
@@ -69,7 +74,7 @@ def jobs_import(body: ImportRequest):
 
         row = job | {
             "content_hash": content_hash,
-            "embedding": embed(raw_text)
+            "embedding": embed(job.get("raw_text").strip()),
         }
 
         sb.table("jobs").insert(row).execute()

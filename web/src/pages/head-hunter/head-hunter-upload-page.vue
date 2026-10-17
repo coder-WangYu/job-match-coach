@@ -1,6 +1,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from "vue"
 import MarkdownText from "../../components/markdown-text.vue"
+import JobEditFields from "../../components/job-edit-fields.vue"
 import { API_BASE, metaOf, normalizeJob, parseTags } from "../../utils/job"
 
 // 解析出来的草稿，确认之后才批量入库
@@ -14,6 +15,11 @@ const importing = ref(false)
 // 正在编辑第几条，-1 表示没有在编辑
 const editingIndex = ref(-1)
 const editBuffer = ref(null)
+
+// 入库失败列表的编辑 / 入库状态
+const skippedEditingIndex = ref(-1)
+const skippedEditBuffer = ref(null)
+const skippedImportingIndex = ref(-1)
 
 // 正在看原文的那条，null 表示弹窗关着
 const rawTextJob = ref(null)
@@ -41,6 +47,7 @@ async function uploadJobs(e) {
 
     jobError.value = ""
     importedCount.value = null
+    skippedContent.value = []
     editingIndex.value = -1
     parsing.value = true
 
@@ -67,18 +74,35 @@ async function uploadJobs(e) {
     }
 }
 
+// 把一条岗位转成编辑用的副本
+function bufferFromJob(job) {
+    return {
+        title: job.title || "",
+        edu: job.edu || "",
+        location: job.location || "",
+        salary: job.salary || "",
+        tagsText: Array.isArray(job.tags) ? job.tags.join("、") : "",
+        requirements: job.requirements || "",
+    }
+}
+
+// 保存时合并回原对象，raw_text 这些没在表单里的字段会保留
+function applyEditBuffer(job, buffer) {
+    return {
+        ...job,
+        title: buffer.title.trim() || "未命名岗位",
+        edu: buffer.edu.trim(),
+        location: buffer.location.trim(),
+        salary: buffer.salary.trim(),
+        tags: parseTags(buffer.tagsText),
+        requirements: buffer.requirements.trim(),
+    }
+}
+
 // 单条编辑：改的是副本，取消就丢掉
 function startEdit(index) {
-    const job = drafts.value[index]
     editingIndex.value = index
-    editBuffer.value = {
-        title: job.title,
-        edu: job.edu,
-        location: job.location,
-        salary: job.salary,
-        tagsText: job.tags.join("、"),
-        requirements: job.requirements,
-    }
+    editBuffer.value = bufferFromJob(drafts.value[index])
 }
 
 function cancelEdit() {
@@ -90,17 +114,74 @@ function saveEdit() {
     const index = editingIndex.value
     if (index < 0 || !editBuffer.value) return
 
-    drafts.value[index] = {
-        ...drafts.value[index],
-        title: editBuffer.value.title.trim() || "未命名岗位",
-        edu: editBuffer.value.edu.trim(),
-        location: editBuffer.value.location.trim(),
-        salary: editBuffer.value.salary.trim(),
-        tags: parseTags(editBuffer.value.tagsText),
-        requirements: editBuffer.value.requirements.trim(),
-    }
-
+    drafts.value[index] = applyEditBuffer(drafts.value[index], editBuffer.value)
     cancelEdit()
+}
+
+// ---- 入库失败列表：逐条编辑 / 入库 / 删除 ----
+
+function startSkippedEdit(index) {
+    skippedEditingIndex.value = index
+    skippedEditBuffer.value = bufferFromJob(skippedContent.value[index])
+}
+
+function cancelSkippedEdit() {
+    skippedEditingIndex.value = -1
+    skippedEditBuffer.value = null
+}
+
+function saveSkippedEdit() {
+    const index = skippedEditingIndex.value
+    if (index < 0 || !skippedEditBuffer.value) return
+
+    skippedContent.value[index] = applyEditBuffer(skippedContent.value[index], skippedEditBuffer.value)
+    cancelSkippedEdit()
+}
+
+// 从失败列表移除一条，顺便修正正在编辑的下标
+function dropSkippedAt(index) {
+    skippedContent.value.splice(index, 1)
+
+    if (skippedEditingIndex.value === index) {
+        cancelSkippedEdit()
+    } else if (skippedEditingIndex.value > index) {
+        skippedEditingIndex.value -= 1
+    }
+}
+
+// 单条重新入库：成功就从失败列表里消失，仍然重复就留着并提示
+async function importSkipped(index) {
+    if (skippedImportingIndex.value !== -1) return
+
+    const job = skippedContent.value[index]
+    if (!job) return
+
+    skippedImportingIndex.value = index
+    jobError.value = ""
+
+    try {
+        const { id, ...payload } = job
+
+        const res = await fetch(`${API_BASE}/head-hunter/jobs-import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobs: [payload] })
+        })
+
+        if (!res.ok) throw new Error("入库失败：" + res.status)
+
+        const data = await res.json()
+
+        if (Number(data.imported) > 0) {
+            dropSkippedAt(index)
+        } else {
+            jobError.value = "这条还是没有入库，可能内容和岗位库里已有的重复"
+        }
+    } catch (err) {
+        jobError.value = err.message
+    } finally {
+        skippedImportingIndex.value = -1
+    }
 }
 
 // 批量入库，成功后清空草稿
@@ -126,7 +207,7 @@ async function importDrafts() {
         drafts.value = []
 
         importedCount.value = Number(data.imported) || drafts.value.length
-        skippedContent.value = data.skipped
+        skippedContent.value = (data.skipped ?? []).map(normalizeJob)
         cancelEdit()
     } catch (err) {
         jobError.value = err.message
@@ -185,6 +266,101 @@ async function importDrafts() {
                         <path d="m9 11 3 3L22 4" />
                     </svg>
                     <span>已入库 {{ importedCount }} 个岗位，可以去「岗位列表」看看</span>
+                </div>
+
+                <!-- 入库失败的数据 -->
+                <div v-if="skippedContent.length" class="mt-4 overflow-hidden rounded-lg border border-amber-200 bg-amber-50/40">
+                    <div class="flex flex-wrap items-center gap-2 border-b border-amber-100 px-4 py-2.5">
+                        <svg class="h-4 w-4 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+                            <path d="M12 9v4" />
+                            <path d="M12 17h.01" />
+                        </svg>
+                        <h2 class="text-sm font-semibold text-amber-800">以下 {{ skippedContent.length }} 个岗位没有入库</h2>
+                        <span class="ml-auto text-[11px] text-amber-700">岗位库里已有相同原文时会跳过</span>
+                    </div>
+
+                    <ul class="divide-y divide-amber-100">
+                        <li v-for="(job, index) in skippedContent" :key="index" class="px-4 py-2.5">
+                            <!-- 只读 -->
+                            <div v-if="skippedEditingIndex !== index" class="flex flex-col gap-2 sm:flex-row sm:items-start">
+                                <div class="flex min-w-0 flex-1 items-start gap-3">
+                                    <span class="mt-0.5 shrink-0 text-[11px] text-amber-600">{{ index + 1 }}</span>
+
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm font-medium text-stone-800">{{ job.title || "未命名岗位" }}</p>
+                                        <p v-if="metaOf(job)" class="mt-0.5 text-xs text-stone-500">{{ metaOf(job) }}</p>
+
+                                        <div v-if="job.tags.length" class="mt-1.5 flex flex-wrap gap-1.5">
+                                            <span
+                                                v-for="tag in job.tags"
+                                                :key="tag"
+                                                class="rounded-md border border-amber-200/70 bg-white px-1.5 py-0.5 text-[11px] text-stone-600"
+                                            >
+                                                {{ tag }}
+                                            </span>
+                                        </div>
+
+                                        <p v-if="job.requirements" class="mt-1 line-clamp-2 text-xs leading-relaxed text-stone-500">
+                                            {{ job.requirements }}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="flex shrink-0 items-center gap-1.5 pl-6 sm:pl-0">
+                                    <button
+                                        type="button"
+                                        class="cursor-pointer rounded-md border border-stone-200 bg-white px-2 py-1 text-xs text-stone-500 transition hover:bg-stone-50 hover:text-stone-800"
+                                        @click="startSkippedEdit(index)"
+                                    >
+                                        编辑
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center gap-1 rounded-md bg-amber-500 px-2 py-1 text-xs font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-stone-300"
+                                        :disabled="skippedImportingIndex === index"
+                                        @click="importSkipped(index)"
+                                    >
+                                        <svg v-if="skippedImportingIndex === index" class="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                        </svg>
+                                        {{ skippedImportingIndex === index ? "入库中…" : "入库" }}
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        class="cursor-pointer rounded-md px-2 py-1 text-xs text-rose-500 transition hover:bg-rose-50 hover:text-rose-600"
+                                        @click="dropSkippedAt(index)"
+                                    >
+                                        删除
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- 编辑中 -->
+                            <div v-else class="grid gap-2">
+                                <JobEditFields v-model="skippedEditBuffer" />
+
+                                <div class="flex justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        class="cursor-pointer rounded-md px-2.5 py-1.5 text-xs text-stone-500 transition hover:bg-stone-100 hover:text-stone-800"
+                                        @click="cancelSkippedEdit"
+                                    >
+                                        取消
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="cursor-pointer rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-amber-600"
+                                        @click="saveSkippedEdit"
+                                    >
+                                        保存
+                                    </button>
+                                </div>
+                            </div>
+                        </li>
+                    </ul>
                 </div>
 
                 <!-- 还没解析出结果时：上传入口 -->
@@ -250,23 +426,7 @@ async function importDrafts() {
 
                             <!-- 编辑中 -->
                             <div v-else class="grid gap-2">
-                                <input v-model="editBuffer.title" placeholder="岗位名称"
-                                    class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
-
-                                <div class="grid gap-2 sm:grid-cols-3">
-                                    <input v-model="editBuffer.edu" placeholder="学历"
-                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
-                                    <input v-model="editBuffer.location" placeholder="城市"
-                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
-                                    <input v-model="editBuffer.salary" placeholder="薪资"
-                                        class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
-                                </div>
-
-                                <input v-model="editBuffer.tagsText" placeholder="标签，用、分隔"
-                                    class="w-full rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100">
-
-                                <textarea v-model="editBuffer.requirements" rows="2" placeholder="任职要求"
-                                    class="w-full resize-none rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed text-stone-700 placeholder:text-stone-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"></textarea>
+                                <JobEditFields v-model="editBuffer" />
 
                                 <div class="flex justify-end gap-2">
                                     <button type="button"
