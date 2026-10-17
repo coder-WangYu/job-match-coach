@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 from job_match_coach.auth.supabase_client import get_supabase
+from job_match_coach.core.store import RESUME_STORE
 from job_match_coach.llm.embed import embed
 from job_match_coach.llm.llm import ask
 
@@ -81,3 +82,110 @@ def jobs_import(body: ImportRequest):
         imported += 1
 
     return {"imported": imported, "skipped": skipped}
+
+
+@router.get("/get-jobs")
+def get_jobs(page: int = 1, page_size: int = 10):
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 10
+
+    sb = get_supabase()
+    start = (page - 1) * page_size
+    end = start + page_size - 1
+
+    response = (
+        sb.table("jobs")
+        .select(
+            "id, title, edu, location, salary, tags, requirements, raw_text, created_at",
+            count="exact",
+        )
+        .order("created_at", desc=True)
+        .range(start, end)
+        .execute()
+    )
+
+    return {"jobs": response.data or [], "total": response.count or 0}
+
+
+@router.post("/match")
+def match(body: dict):
+    resume_id = body.get("resume_id")
+    resume = RESUME_STORE.get(resume_id)
+    resume_embed = embed(resume)
+
+    sb = get_supabase()
+    result_top5 = (
+        sb.rpc("match_jobs", {"query_embedding": resume_embed, "match_count": 5})
+        .execute()
+        .data
+    )
+
+    jobs_text = "\n\n".join(
+        f"岗位id: {j['id']}\n"
+        f"标题: {j.get('title') or ''}\n"
+        f"学历: {j.get('edu') or ''}\n"
+        f"地点: {j.get('location') or ''}\n"
+        f"薪资: {j.get('salary') or ''}\n"
+        f"要求: {j.get('requirements') or ''}\n"
+        f"原文: {j.get('raw_text') or ''}"
+        for j in result_top5
+    )
+    print(jobs_text)
+
+    response = ask(
+        f"""
+        你是猎头人岗匹配助手。根据候选人简历，给下面每个候选岗位打 0–100 分。
+        
+        要求：
+            1. 只输出合法 JSON 数组
+            2. 不要 markdown
+            3. 不要其它说明
+            4. 每个元素字段：
+                id: 岗位 id（必须与下面完全一致）
+                score: 整数 0–100
+                reason: 一句话理由
+        
+        分档参考：
+            >=80 非常推荐；
+            60–79 可约面；
+            45–59 可优化；
+            <50 不适合。
+        
+        候选人简历：{resume}
+        候选岗位：{jobs_text}
+    """
+    )
+
+    result = json.loads(response)
+    by_id = {str(j["id"]): j for j in result_top5}
+    matches = []
+    for item in result:
+        job = by_id.get(str(item.get("id")))
+        if not job:
+            continue
+        
+        score = int(item.get("score") or 0)
+        if score < 50:
+            continue
+
+        matches.append(
+            {
+                "job": {
+                    "id": job["id"],
+                    "title": job.get("title"),
+                    "edu": job.get("edu"),
+                    "location": job.get("location"),
+                    "salary": job.get("salary"),
+                    "tags": job.get("tags"),
+                    "requirements": job.get("requirements"),
+                    "raw_text": job.get("raw_text"),
+                },
+                "score": score,
+                "reason": item.get("reason") or "",
+            }
+        )
+    matches.sort(key=lambda x: x["score"], reverse=True)
+    
+    return {"matches": matches}
