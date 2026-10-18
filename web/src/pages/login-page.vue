@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ROLE_OPTIONS, ROLES } from '../config/roles'
-import { API_BASE } from "../../utils/job"
+import { API_BASE } from "../utils/job"
 
 
 const router = useRouter()

@@ -1,7 +1,7 @@
 <script setup>
 import { nextTick, ref } from 'vue';
 import MarkdownText from '../components/markdown-text.vue';
-import { API_BASE } from "../../utils/job"
+import { API_BASE } from "../utils/job"
 
 
 // 简历文件与后端返回的 resume_id
