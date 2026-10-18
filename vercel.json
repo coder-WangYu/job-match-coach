@@ -11,11 +11,16 @@
       }
     },
     "rewrites": [
-      {
-        "source": "/(.*)",
-        "destination": {
-          "service": "app"
-        }
-      }
+        { "source": "/health", "destination": { "service": "app" } },
+        { "source": "/register", "destination": { "service": "app" } },
+        { "source": "/login", "destination": { "service": "app" } },
+        { "source": "/upload_resume", "destination": { "service": "app" } },
+        { "source": "/match", "destination": { "service": "app" } },
+        { "source": "/chat", "destination": { "service": "app" } },
+        { "source": "/hr/(.*)", "destination": { "service": "app" } },
+        { "source": "/head-hunter/(.*)", "destination": { "service": "app" } },
+        { "source": "/docs", "destination": { "service": "app" } },
+        { "source": "/openapi.json", "destination": { "service": "app" } },
+        { "source": "/(.*)", "destination": { "service": "web" } }
     ]
   }
