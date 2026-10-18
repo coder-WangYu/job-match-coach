@@ -23,9 +23,9 @@ app.add_middleware(
     allow_headers=["*"] # 允许任何请求头
 )
 
-app.include_router(auth.router)
-app.include_router(upload.router)
-app.include_router(match.router)
-app.include_router(chat.router)
-app.include_router(hr_screen.router, prefix="/hr")
-app.include_router(head_hunter.router, prefix="/head-hunter")
+app.include_router(auth.router, prefix="/api")
+app.include_router(upload.router, prefix="/api")
+app.include_router(match.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
+app.include_router(hr_screen.router, prefix="/api/hr")
+app.include_router(head_hunter.router, prefix="/api/head-hunter")

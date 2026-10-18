@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ROLE_OPTIONS, ROLES } from '../config/roles'
+import { API_BASE } from "../../utils/job"
 
-const API_BASE = "http://127.0.0.1:8000"
 
 const router = useRouter()
 const userStore = useUserStore()

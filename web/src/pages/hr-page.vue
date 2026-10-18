@@ -4,8 +4,7 @@ import MarkdownText from '../components/markdown-text.vue'
 import VuePdfEmbed from "vue-pdf-embed"
 import 'vue-pdf-embed/dist/styles/annotationLayer.css'
 import 'vue-pdf-embed/dist/styles/textLayer.css'
-
-const API_BASE = "http://127.0.0.1:8000"
+import { API_BASE } from "../../utils/job"
 
 // 岗位描述
 const jd = ref("")

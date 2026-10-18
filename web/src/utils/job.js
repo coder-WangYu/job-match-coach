@@ -1,6 +1,6 @@
 // 猎头这块几个页面共用的小工具
 
-export const API_BASE = "http://127.0.0.1:8000"
+export const API_BASE = import.meta.env.PROD ? "/api" : "http://127.0.0.1:8000/api"
 
 // 岗位按这几个字段渲染；后端字段名如果有出入，改这一个函数就够了
 export function normalizeJob(item, index) {

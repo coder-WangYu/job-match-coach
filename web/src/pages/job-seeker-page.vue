@@ -1,8 +1,8 @@
 <script setup>
 import { nextTick, ref } from 'vue';
 import MarkdownText from '../components/markdown-text.vue';
+import { API_BASE } from "../../utils/job"
 
-const API_BASE = "http://127.0.0.1:8000"
 
 // 简历文件与后端返回的 resume_id
 const resumeFile = ref(null)
