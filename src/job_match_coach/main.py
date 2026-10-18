@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).resolve().parents[1]  # 指向 .../src
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from job_match_coach.api import auth, head_hunter, hr_screen, upload, match, chat
